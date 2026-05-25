@@ -23,8 +23,15 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Core Service Initializations
 db_service = DatabaseService()
-gdrive_service = GoogleDriveService()
+
+try:
+    gdrive_service = GoogleDriveService()
+except Exception as e:
+    logger.error(f"Failed to initialize GoogleDriveService (Check GOOGLE_CREDENTIALS_JSON): {e}", exc_info=True)
+    gdrive_service = None
+
 report_service = ReportService()
 ai_service = AIService(db_service, gdrive_service, report_service)
 whatsapp_service = WhatsAppService()
@@ -83,23 +90,3 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     logger.info(f"Servidor iniciado na porta {port}")
     app.run(host="0.0.0.0", port=port)
-
-from flask import Flask, request, jsonify
-
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "Chatbot online"
-
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok"})
-
-@app.route("/webhook/evolution", methods=["POST"])
-def webhook():
-    data = request.json
-
-    print(data)
-
-    return jsonify({"success": True})
