@@ -1,5 +1,5 @@
 """
-WhatsApp Chatbot — Evolution API + OpenAI + Render.com
+WhatsApp Chatbot — Evolution API + OpenAI + Railway
 """
 
 import os
@@ -23,18 +23,23 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Core Service Initializations
+# Inicialização dos Serviços com segurança
 db_service = DatabaseService()
 
 try:
     gdrive_service = GoogleDriveService()
 except Exception as e:
-    logger.error(f"Failed to initialize GoogleDriveService (Check GOOGLE_CREDENTIALS_JSON): {e}", exc_info=True)
+    logger.error(f"Falha ao iniciar GoogleDriveService: {e}", exc_info=True)
     gdrive_service = None
 
 report_service = ReportService()
 ai_service = AIService(db_service, gdrive_service, report_service)
 whatsapp_service = WhatsAppService()
+
+
+@app.route("/")
+def home():
+    return "Chatbot online", 200
 
 
 @app.route("/webhook/evolution", methods=["POST"])
