@@ -4,6 +4,12 @@ WhatsApp Chatbot — Evolution API + OpenAI + Railway
 
 import os
 import logging
+import threading
+import time
+import schedule
+# Importe a função principal do seu arquivo de sincronização
+# (Substitua 'sua_funcao_de_sync' pelo nome real da função que puxa os dados)
+from sync_sheets_to_postgres import sua_funcao_de_sync
 from flask import Flask, request, jsonify, send_from_directory
 from dotenv import load_dotenv
 
@@ -95,3 +101,30 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     logger.info(f"Servidor iniciado na porta {port}")
     app.run(host="0.0.0.0", port=port)
+
+def start_background_scheduler():
+    """
+    Função que roda o relógio do agendador em segundo plano.
+    """
+    # Exemplo: Agendando para rodar a cada 1 hora
+    schedule.every(1).hours.do(sua_funcao_de_sync)
+    
+    # Se quiser testar primeiro a cada 1 minuto, use a linha abaixo em vez da de cima:
+    # schedule.every(1).minutes.do(sua_funcao_de_sync)
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60) # Checa a cada 60 segundos se tem alguma tarefa na fila
+
+if __name__ == '__main__':
+    # 1. Cria a thread do agendador
+    # O daemon=True é CRÍTICO! Ele garante que se o Railway reiniciar seu bot, 
+    # essa thread morre junto e não fica travada na memória.
+    scheduler_thread = threading.Thread(target=start_background_scheduler, daemon=True)
+    
+    # 2. Inicia o relógio em segundo plano
+    scheduler_thread.start()
+    print("⏳ Agendador de sincronização do Google Sheets iniciado em segundo plano!")
+
+    # 3. Inicia o servidor Flask (Evolution API) normalmente na thread principal
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
