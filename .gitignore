@@ -1,0 +1,14 @@
+# NUNCA versionar credenciais!
+.env
+*.json
+
+# Relatórios gerados
+reports/
+pdfs/
+bot.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

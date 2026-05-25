@@ -1,156 +1,216 @@
-# 🤖 WhatsApp Chatbot — OpenAI + Evolution API + Render.com
+# 🤖 WhatsApp Chatbot — Jacy Afonso (PT/DF)
 
-Chatbot para WhatsApp que responde perguntas em linguagem natural sobre dados do
-PostgreSQL e Google Drive, com geração de relatórios em PDF. 100% gratuito.
+Chatbot administrativo rodando **100% gratuito** no seu PC Windows.
 
----
-
-## 🏗️ Arquitetura
-
-```
-WhatsApp → Evolution API → Flask (Render.com) → GPT-4o (Function Calling)
-                                                      ├── PostgreSQL
-                                                      ├── Google Drive
-                                                      └── PDF (ReportLab)
-```
+**Stack:** Gemini Flash · Evolution API (Docker) · Flask · PostgreSQL (Neon) · Google Sheets · Cloudflare Tunnel
 
 ---
 
-## 📁 Estrutura
+## ⚠️ Antes de tudo: segurança
 
+Se você tinha um `.env` público no GitHub com senhas reais, **revogue tudo agora**:
+
+1. **Gemini:** https://aistudio.google.com/app/apikey → delete a chave antiga, crie nova
+2. **Neon PostgreSQL:** https://console.neon.tech → Settings → Reset password
+3. **Google Service Account:** https://console.cloud.google.com → IAM → Service Accounts → sua conta → Keys → delete a chave antiga, crie nova (JSON)
+
+Depois, remova o `.env` do histórico do git:
 ```
-whatsapp_chatbot/
-├── main.py                     # Flask app + webhook
-├── render.yaml                 # Deploy automático no Render
-├── requirements.txt
-├── .env.example
-├── schema.sql
-└── services/
-    ├── ai_service.py           # OpenAI GPT-4o + Function Calling
-    ├── db_service.py           # Queries PostgreSQL
-    ├── gdrive_service.py       # Google Drive / Sheets
-    ├── report_service.py       # Geração de PDF
-    └── whatsapp_service.py     # Envio via Evolution API
+git filter-branch --force --index-filter "git rm --cached --ignore-unmatch .env" --prune-empty --tag-name-filter cat -- --all
+git push origin --force --all
 ```
 
 ---
 
-## 🚀 Passo a passo completo
+## 🛠️ Instalação (passo a passo)
 
-### 1. Suba o código no GitHub
+### 1. Pré-requisitos no Windows
 
-```bash
-git init
-git add .
-git commit -m "primeiro commit"
-git remote add origin https://github.com/seu-usuario/whatsapp-chatbot.git
-git push -u origin main
+- **Python 3.11+** → https://python.org/downloads (marque "Add to PATH")
+- **Docker Desktop** → https://docker.com/products/docker-desktop
+- **Cloudflared** → https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+
+Para instalar o Cloudflared via winget (PowerShell):
+```powershell
+winget install --id Cloudflare.cloudflared
 ```
-
-### 2. Deploy no Render.com (bot principal)
-
-1. Acesse [render.com](https://render.com) → crie conta gratuita
-2. *New → Web Service → Connect a repository* → selecione o repositório
-3. O Render detecta o `render.yaml` automaticamente
-4. Vá em **Environment** e preencha as variáveis marcadas com `sync: false`:
-   - `OPENAI_API_KEY` — sua chave em [platform.openai.com](https://platform.openai.com)
-   - `DATABASE_URL` — connection string do PostgreSQL
-   - `GOOGLE_CREDENTIALS_JSON` — conteúdo do JSON da Service Account em uma linha
-   - `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE` — após o passo 3
-5. Clique em **Deploy** — o Render gera uma URL tipo `https://whatsapp-chatbot.onrender.com`
-6. Copie essa URL e coloque em `BASE_URL` nas variáveis de ambiente
-
-> ⚠️ O plano gratuito do Render dorme após 15 min de inatividade. Para manter ativo,
-> use [UptimeRobot](https://uptimerobot.com) para fazer ping em `/health` a cada 5 min.
 
 ---
 
-### 3. Evolution API no Render (ou VPS)
+### 2. Configurar o projeto
 
-#### Opção A — Render (gratuito, mais fácil)
+```cmd
+cd whatsapp-chatbot
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+```
 
-1. No Render, crie um novo *Web Service*
-2. Use a imagem Docker: `atendai/evolution-api:latest`
-3. Adicione as variáveis:
-   ```
-   AUTHENTICATION_API_KEY=crie-uma-chave-secreta-aqui
-   DATABASE_ENABLED=false
-   ```
-4. Anote a URL gerada (ex: `https://evolution-api.onrender.com`)
+Abra o `.env` no Bloco de Notas e preencha os valores (veja seção abaixo).
 
-#### Opção B — VPS / máquina local com ngrok
+---
 
-```bash
-docker run -d \
-  --name evolution-api \
-  -p 8080:8080 \
-  -e AUTHENTICATION_API_KEY=minha-chave \
+### 3. Preencher o .env
+
+#### Gemini (IA) — gratuito
+1. Acesse https://aistudio.google.com/app/apikey
+2. Clique em "Create API Key"
+3. Cole em `GEMINI_API_KEY=`
+
+#### Evolution API (chave)
+Crie qualquer senha aleatória para `EVOLUTION_API_KEY=` (ex: `minha-chave-secreta-123`)
+
+#### PostgreSQL — Neon.tech (gratuito)
+1. Crie conta em https://neon.tech
+2. Crie um projeto → copie a "Connection string"
+3. Cole em `DATABASE_URL=`
+
+#### Google Sheets
+1. Pegue o ID da sua planilha na URL (parte entre `/d/` e `/edit`)
+2. Cole em `SPREADSHEET_ID=`
+3. Para converter o JSON da Service Account em uma linha, execute:
+```cmd
+python -c "import json; print(json.dumps(json.load(open('credenciais.json'))))"
+```
+4. Cole o resultado em `GOOGLE_CREDENTIALS_JSON=`
+5. **Compartilhe a planilha** com o e-mail da service account (`...@projeto.iam.gserviceaccount.com`)
+
+---
+
+### 4. Subir a Evolution API (Docker)
+
+Abra o **Docker Desktop** e deixe rodando. Depois, no terminal:
+
+```cmd
+docker run -d ^
+  --name evolution-api ^
+  --restart always ^
+  -p 8080:8080 ^
+  -e AUTHENTICATION_API_KEY=SUA_CHAVE_AQUI ^
   atendai/evolution-api:latest
 ```
 
----
+Substitua `SUA_CHAVE_AQUI` pelo mesmo valor que colocou em `EVOLUTION_API_KEY` no `.env`.
 
-### 4. Conectar o WhatsApp
-
-1. Acesse `https://SUA-EVOLUTION-URL/manager` (ou use a API REST)
-2. Crie uma instância: `POST /instance/create` com `{"instanceName": "meu-bot"}`
-3. Gere o QR Code: `GET /instance/connect/meu-bot`
-4. Escaneie o QR Code com o WhatsApp do celular que vai ser o bot
-5. Configure o webhook:
-   ```
-   POST /webhook/set/meu-bot
-   {
-     "url": "https://whatsapp-chatbot.onrender.com/webhook/evolution",
-     "events": ["MESSAGES_UPSERT"]
-   }
-   ```
-
-> ⚠️ Use um chip dedicado — o número conectado vira o bot e não pode ser usado normalmente.
+Verifique se subiu: http://localhost:8080
 
 ---
 
-### 5. Google Drive — Service Account
+### 5. Criar instância e conectar o WhatsApp
 
-1. Acesse [console.cloud.google.com](https://console.cloud.google.com)
-2. Crie um projeto → ative **Drive API** e **Sheets API**
-3. *IAM & Admin → Service Accounts → Criar → baixar JSON*
-4. Para o Render, cole o conteúdo do JSON inteiro na variável `GOOGLE_CREDENTIALS_JSON`
-5. Compartilhe suas planilhas/pastas com o e-mail da service account (`...@projeto.iam.gserviceaccount.com`)
+No terminal (com o Docker rodando):
 
----
+```cmd
+REM Cria a instância
+curl -X POST http://localhost:8080/instance/create ^
+  -H "Content-Type: application/json" ^
+  -H "apikey: SUA_CHAVE_AQUI" ^
+  -d "{\"instanceName\": \"PT-JACY\"}"
 
-### 6. Banco de dados PostgreSQL gratuito
+REM Gera o QR Code (acesse no navegador)
+curl http://localhost:8080/instance/connect/PT-JACY ^
+  -H "apikey: SUA_CHAVE_AQUI"
+```
 
-Opções gratuitas compatíveis com o Render:
+Ou acesse **http://localhost:8080/manager** no navegador para interface visual.
 
-- **Render PostgreSQL** — crie em *New → PostgreSQL*, ele preenche `DATABASE_URL` automaticamente
-- **Neon.tech** — plano gratuito generoso, ótima opção
-- **Supabase** — também gratuito, tem painel visual
+Escaneie o QR Code com o WhatsApp do chip que vai ser o bot.
 
----
-
-## 💬 Exemplos de uso no WhatsApp
-
-| Mensagem | Ação |
-|---|---|
-| `Qual o endereço de João Silva?` | Busca no PostgreSQL |
-| `Quantas pessoas moram em Recife?` | Conta registros por cidade |
-| `Lista pessoas do bairro Boa Vista em PE` | Listagem filtrada |
-| `Tem planilha de clientes no Drive?` | Busca no Google Drive |
-| `Gera relatório de pessoas por cidade` | Cria PDF e envia link |
+> ⚠️ Use um chip dedicado — o número conectado vira o bot!
 
 ---
 
-## 🔧 Rodar localmente (desenvolvimento)
+### 6. Abrir o túnel Cloudflare (URL pública gratuita)
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # preencha o .env
+Em um terminal separado:
 
-# Para expor localmente e testar o webhook:
-ngrok http 5000        # use a URL gerada na config do Evolution
+```cmd
+cloudflared tunnel --url http://localhost:5000
+```
 
+Vai aparecer uma URL tipo: `https://abc-def-123.trycloudflare.com`
+
+Copie essa URL e coloque no `.env`:
+```
+BASE_URL=https://abc-def-123.trycloudflare.com
+```
+
+---
+
+### 7. Configurar o webhook da Evolution API
+
+```cmd
+curl -X PUT http://localhost:8080/webhook/set/PT-JACY ^
+  -H "Content-Type: application/json" ^
+  -H "apikey: SUA_CHAVE_AQUI" ^
+  -d "{\"url\": \"https://SEU-TUNEL.trycloudflare.com/webhook/evolution\", \"events\": [\"MESSAGES_UPSERT\"]}"
+```
+
+---
+
+### 8. Iniciar o bot
+
+```cmd
+.venv\Scripts\activate
 python main.py
 ```
+
+Pronto! Mande uma mensagem para o número conectado e o bot vai responder.
+
+---
+
+## 📁 PDFs para análise
+
+Para que o bot possa ler PDFs, coloque os arquivos na pasta `pdfs/`:
+```
+whatsapp-chatbot/
+└── pdfs/
+    ├── ata_reuniao_jan.pdf
+    ├── relatorio_financeiro.pdf
+    └── ...
+```
+
+Depois peça ao bot: *"Leia o arquivo ata_reuniao_jan.pdf e me faça um resumo"*
+
+---
+
+## 💬 Exemplos de uso
+
+| Mensagem | O que o bot faz |
+|---|---|
+| `Quem mora na quadra 5?` | Consulta o PostgreSQL |
+| `Mostra a aba Moradores da planilha` | Lê o Google Sheets |
+| `Gera um relatório de inadimplentes` | Cria PDF para download |
+| `Leia o arquivo ata_março.pdf` | Extrai e resume o PDF |
+| `Quantas pessoas estão em dia?` | Consulta banco + responde |
+
+---
+
+## 🔁 Para reiniciar (toda vez que ligar o PC)
+
+```cmd
+REM 1. Docker Desktop já sobe automaticamente se configurado
+REM 2. Terminal 1 — túnel
+cloudflared tunnel --url http://localhost:5000
+
+REM 3. Terminal 2 — bot
+cd whatsapp-chatbot
+.venv\Scripts\activate
+python main.py
+```
+
+> Dica: crie um arquivo `iniciar.bat` com esses comandos para facilitar.
+
+---
+
+## 💰 Custo mensal estimado
+
+| Serviço | Plano | Custo |
+|---|---|---|
+| Gemini Flash | Free (1500 req/dia) | R$ 0 |
+| Neon PostgreSQL | Free (0.5 GB) | R$ 0 |
+| Google Sheets | Free | R$ 0 |
+| Evolution API | Self-hosted | R$ 0 |
+| Cloudflare Tunnel | Free | R$ 0 |
+| **Total** | | **R$ 0** |

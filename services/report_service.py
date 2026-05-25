@@ -1,158 +1,179 @@
 """
-Serviço de geração de relatórios PDF com ReportLab.
+Serviço de relatórios:
+- Gera PDFs com ReportLab
+- Extrai texto de PDFs com PyMuPDF (fitz)
 """
 
-import logging
 import os
-import uuid
+import logging
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph,
-    Spacer, HRFlowable
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 logger = logging.getLogger(__name__)
-
-OUTPUT_DIR = os.getenv("REPORTS_DIR", "reports")
-BASE_URL = os.getenv("BASE_URL", "http://localhost:5000")
 
 
 class ReportService:
     def __init__(self):
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        self.reports_dir = os.path.abspath(os.getenv("REPORTS_DIR", "reports"))
+        os.makedirs(self.reports_dir, exist_ok=True)
 
-    def gerar(self, tipo: str, dados: list, titulo: str = None) -> str:
-        """Gera um PDF e retorna a URL pública de download."""
-        filename = f"relatorio_{uuid.uuid4().hex[:8]}.pdf"
-        filepath = os.path.join(OUTPUT_DIR, filename)
+    def generate_pdf(self, titulo: str, conteudo: str, fonte_dados: str = "") -> str:
+        """
+        Gera um PDF e salva em reports/.
+        Retorna o nome do arquivo gerado.
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Nome seguro para arquivo
+        nome_seguro = "".join(c if c.isalnum() or c in "_ " else "_" for c in titulo)
+        nome_seguro = nome_seguro[:40].strip().replace(" ", "_")
+        filename = f"{nome_seguro}_{timestamp}.pdf"
+        filepath = os.path.join(self.reports_dir, filename)
 
-        titulos = {
-            "pessoas_por_cidade": "Relatório de Pessoas por Cidade",
-            "listagem_geral": "Listagem Geral de Pessoas",
-            "personalizado": "Relatório Personalizado",
-        }
-        titulo = titulo or titulos.get(tipo, "Relatório")
-
-        self._build_pdf(filepath, titulo, dados, tipo)
-        logger.info(f"Relatório gerado: {filepath} ({len(dados)} registros)")
-
-        return f"{BASE_URL}/reports/{filename}"
-
-    def _build_pdf(self, filepath: str, titulo: str, dados: list, tipo: str):
-        doc = SimpleDocTemplate(
-            filepath,
-            pagesize=A4,
-            topMargin=2 * cm,
-            bottomMargin=2 * cm,
-            leftMargin=2 * cm,
-            rightMargin=2 * cm,
-        )
-
-        styles = getSampleStyleSheet()
-        title_style = ParagraphStyle(
-            "Title",
-            parent=styles["Title"],
-            fontSize=16,
-            textColor=colors.HexColor("#1a237e"),
-            spaceAfter=6,
-        )
-        sub_style = ParagraphStyle(
-            "Sub",
-            parent=styles["Normal"],
-            fontSize=9,
-            textColor=colors.grey,
-            spaceAfter=12,
-        )
-
-        elements = []
-
-        # Cabeçalho
-        elements.append(Paragraph(titulo, title_style))
-        elements.append(
-            Paragraph(
-                f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')} | Total: {len(dados)} registros",
-                sub_style,
+        try:
+            doc = SimpleDocTemplate(
+                filepath,
+                pagesize=A4,
+                rightMargin=2 * cm,
+                leftMargin=2 * cm,
+                topMargin=2.5 * cm,
+                bottomMargin=2 * cm,
             )
-        )
-        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#1a237e")))
-        elements.append(Spacer(1, 0.4 * cm))
 
-        if not dados:
-            elements.append(Paragraph("Nenhum dado encontrado para os filtros informados.", styles["Normal"]))
-        else:
-            table_data = self._build_table_data(dados, tipo)
-            col_widths = self._get_col_widths(tipo)
-            table = Table(table_data, colWidths=col_widths, repeatRows=1)
-            table.setStyle(self._table_style())
-            elements.append(table)
+            styles = getSampleStyleSheet()
+            story = []
 
-        # Rodapé simples
-        elements.append(Spacer(1, 0.5 * cm))
-        elements.append(
-            Paragraph(
-                "Documento gerado automaticamente pelo ChatBot.",
-                ParagraphStyle("footer", parent=styles["Normal"], fontSize=7, textColor=colors.grey),
+            # Estilo do título
+            title_style = ParagraphStyle(
+                "TitleStyle",
+                parent=styles["Title"],
+                fontSize=18,
+                textColor=colors.HexColor("#1a1a2e"),
+                spaceAfter=6,
+                alignment=TA_CENTER,
             )
-        )
 
-        doc.build(elements)
+            # Estilo do subtítulo
+            sub_style = ParagraphStyle(
+                "SubStyle",
+                parent=styles["Normal"],
+                fontSize=10,
+                textColor=colors.grey,
+                spaceAfter=16,
+                alignment=TA_CENTER,
+            )
 
-    def _build_table_data(self, dados: list, tipo: str) -> list:
-        if tipo == "pessoas_por_cidade":
-            header = ["Cidade", "Estado", "Total de Pessoas"]
-            rows = [[d.get("cidade", ""), d.get("estado", ""), str(d.get("total", 0))] for d in dados]
-        elif tipo == "listagem_geral":
-            header = ["Nome", "CPF", "Cidade", "Estado", "Bairro", "Telefone"]
-            rows = [
-                [
-                    d.get("nome", ""),
-                    self._format_cpf(d.get("cpf", "")),
-                    d.get("cidade", ""),
-                    d.get("estado", ""),
-                    d.get("bairro", ""),
-                    d.get("telefone", ""),
-                ]
-                for d in dados
-            ]
-        else:
-            if not dados:
-                return [["Sem dados"]]
-            header = list(dados[0].keys())
-            rows = [[str(d.get(k, "")) for k in header] for d in dados]
+            # Estilo do corpo
+            body_style = ParagraphStyle(
+                "BodyStyle",
+                parent=styles["Normal"],
+                fontSize=11,
+                leading=16,
+                spaceAfter=8,
+                alignment=TA_LEFT,
+            )
 
-        return [header] + rows
+            # Cabeçalho
+            story.append(Paragraph("Administração Jacy Afonso — PT/DF", sub_style))
+            story.append(Paragraph(titulo, title_style))
+            story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#1a1a2e")))
+            story.append(Spacer(1, 0.3 * cm))
 
-    def _get_col_widths(self, tipo: str):
-        avail = 17 * cm
-        if tipo == "pessoas_por_cidade":
-            return [avail * 0.5, avail * 0.2, avail * 0.3]
-        elif tipo == "listagem_geral":
-            return [avail * 0.25, avail * 0.15, avail * 0.15, avail * 0.1, avail * 0.15, avail * 0.2]
-        return None  # auto
+            # Data/hora de geração
+            gerado_em = datetime.now().strftime("%d/%m/%Y às %H:%M")
+            story.append(Paragraph(f"Gerado em: {gerado_em}" + (f" | Fonte: {fonte_dados}" if fonte_dados else ""), sub_style))
+            story.append(Spacer(1, 0.5 * cm))
 
-    def _table_style(self):
-        return TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a237e")),
+            # Conteúdo: detecta se tem tabelas (linhas com | )
+            linhas = conteudo.split("\n")
+            tabela_linhas = []
+            texto_buffer = []
+
+            for linha in linhas:
+                if "|" in linha and linha.count("|") >= 2:
+                    # Flush texto antes da tabela
+                    if texto_buffer:
+                        texto = "<br/>".join(texto_buffer)
+                        story.append(Paragraph(texto, body_style))
+                        story.append(Spacer(1, 0.2 * cm))
+                        texto_buffer = []
+                    tabela_linhas.append(linha)
+                else:
+                    # Flush tabela antes do texto
+                    if tabela_linhas:
+                        story.extend(self._build_table(tabela_linhas))
+                        story.append(Spacer(1, 0.3 * cm))
+                        tabela_linhas = []
+                    if linha.startswith("---") or linha.startswith("==="):
+                        continue
+                    if linha.strip():
+                        texto_buffer.append(linha.replace("&", "&amp;").replace("<", "&lt;"))
+                    else:
+                        if texto_buffer:
+                            texto = "<br/>".join(texto_buffer)
+                            story.append(Paragraph(texto, body_style))
+                            story.append(Spacer(1, 0.2 * cm))
+                            texto_buffer = []
+
+            # Flush restantes
+            if tabela_linhas:
+                story.extend(self._build_table(tabela_linhas))
+            if texto_buffer:
+                texto = "<br/>".join(texto_buffer)
+                story.append(Paragraph(texto, body_style))
+
+            doc.build(story)
+            logger.info(f"✅ PDF gerado: {filename}")
+            return filename
+
+        except Exception as e:
+            logger.error(f"Erro ao gerar PDF: {e}", exc_info=True)
+            raise
+
+    def _build_table(self, linhas_com_pipe: list) -> list:
+        """Converte linhas com | em uma Table do ReportLab."""
+        data = []
+        for linha in linhas_com_pipe:
+            if set(linha.strip()) <= set("-| "):
+                continue  # Pula separadores
+            cells = [cell.strip() for cell in linha.split("|")]
+            cells = [c for c in cells if c or True]  # Mantém células
+            if cells:
+                data.append(cells)
+
+        if not data:
+            return []
+
+        table = Table(data, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a2e")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 1), (-1, -1), 8),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#e8eaf6")]),
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#9fa8da")),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ])
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f0f4f8")]),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("PADDING", (0, 0), (-1, -1), 5),
+        ]))
+        return [table]
 
-    @staticmethod
-    def _format_cpf(cpf: str) -> str:
-        cpf = "".join(filter(str.isdigit, str(cpf)))
-        if len(cpf) == 11:
-            return f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
-        return cpf
+    def extract_pdf_text(self, filepath: str) -> str:
+        """Extrai texto de um PDF usando PyMuPDF."""
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(filepath)
+            texto = ""
+            for page in doc:
+                texto += page.get_text()
+            doc.close()
+            logger.info(f"✅ PDF lido: {os.path.basename(filepath)} ({len(texto)} chars)")
+            return texto.strip()
+        except ImportError:
+            return "Erro: PyMuPDF não instalado. Execute: pip install pymupdf"
+        except Exception as e:
+            logger.error(f"Erro ao ler PDF: {e}")
+            return f"Erro ao ler o PDF: {str(e)}"
