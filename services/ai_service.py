@@ -1,219 +1,184 @@
 """
-Serviço de IA — OpenAI GPT-4o com Function Calling.
+Serviço de IA — Google Gemini (substitui OpenAI GPT-4o)
+Modelo padrão: gemini-2.5-flash-lite (gratuito: 15 RPM, 1.000 req/dia)
+Para mais capacidade, troque para: gemini-2.5-flash (10 RPM, 250 req/dia)
 """
 
+import os
 import json
 import logging
-import os
-from openai import OpenAI
+import google.generativeai as genai
+from google.generativeai.types import FunctionDeclaration, Tool
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Você é um assistente inteligente para WhatsApp que responde perguntas
-com base em dados de um banco PostgreSQL e Google Drive.
+# ── Configuração ──────────────────────────────────────────────────────────────
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-Você tem acesso às seguintes funções:
-- buscar_endereco: busca o endereço de uma pessoa pelo nome ou CPF
-- contar_pessoas_localidade: conta quantas pessoas existem em uma cidade/estado/bairro
-- listar_pessoas_localidade: lista pessoas em uma localidade
-- buscar_no_drive: busca arquivos ou planilhas no Google Drive
-- gerar_relatorio: gera um relatório PDF e retorna o link para download
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite-preview-06-17")
 
-Regras:
-1. Responda sempre em português brasileiro
-2. Seja direto e objetivo — estamos no WhatsApp, sem formatações complexas
-3. Se não encontrar dados, informe claramente
-4. Nunca invente dados — use apenas os retornados pelas funções
-5. Para relatórios, confirme com o usuário antes de gerar se não estiver claro
-"""
+SYSTEM_PROMPT = """Você é um assistente virtual da Administração do Jacy Afonso (PT/DF).
+Responda sempre em português brasileiro, de forma clara e objetiva.
+Você tem acesso a ferramentas para consultar o banco de dados PostgreSQL,
+arquivos no Google Drive e gerar relatórios em PDF.
+Sempre que o usuário pedir dados, use as ferramentas disponíveis antes de responder."""
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "buscar_endereco",
-            "description": "Busca o endereço completo de uma pessoa pelo nome ou CPF.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "nome": {"type": "string", "description": "Nome completo ou parcial"},
-                    "cpf":  {"type": "string", "description": "CPF da pessoa (opcional)"},
+# ── Declaração das ferramentas (Function Calling) ─────────────────────────────
+TOOLS = Tool(function_declarations=[
+    FunctionDeclaration(
+        name="buscar_no_banco",
+        description="Busca informações no banco de dados PostgreSQL. Use para consultas sobre pessoas, endereços, bairros, cidades ou qualquer dado cadastral.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query_type": {
+                    "type": "string",
+                    "enum": ["buscar_por_nome", "buscar_por_cidade", "buscar_por_bairro", "contar_por_cidade", "listar_todos"],
+                    "description": "Tipo de consulta a ser executada"
                 },
+                "parametro": {
+                    "type": "string",
+                    "description": "Valor a ser pesquisado (nome, cidade, bairro, etc.)"
+                }
             },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "contar_pessoas_localidade",
-            "description": "Conta o número de pessoas cadastradas em uma cidade, estado ou bairro.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "cidade": {"type": "string"},
-                    "estado": {"type": "string", "description": "Sigla do estado, ex: SP"},
-                    "bairro": {"type": "string"},
+            "required": ["query_type"]
+        }
+    ),
+    FunctionDeclaration(
+        name="buscar_no_drive",
+        description="Busca arquivos e planilhas no Google Drive. Use quando o usuário mencionar planilhas, documentos ou arquivos.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "nome_arquivo": {
+                    "type": "string",
+                    "description": "Nome ou parte do nome do arquivo a buscar"
+                }
+            },
+            "required": ["nome_arquivo"]
+        }
+    ),
+    FunctionDeclaration(
+        name="gerar_relatorio_pdf",
+        description="Gera um relatório em PDF com os dados solicitados e retorna o link para download.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "tipo_relatorio": {
+                    "type": "string",
+                    "description": "Descrição do relatório a ser gerado (ex: 'pessoas por cidade', 'lista do bairro X')"
                 },
+                "filtro": {
+                    "type": "string",
+                    "description": "Filtro a aplicar nos dados (opcional)"
+                }
             },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "listar_pessoas_localidade",
-            "description": "Lista pessoas em uma localidade com nome e contato.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "cidade":  {"type": "string"},
-                    "estado":  {"type": "string"},
-                    "bairro":  {"type": "string"},
-                    "limite":  {"type": "integer", "description": "Máximo de registros (padrão 10)"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "buscar_no_drive",
-            "description": "Busca arquivos ou dados em planilhas do Google Drive.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "termo": {"type": "string", "description": "Termo de busca"},
-                    "tipo":  {"type": "string", "description": "planilha, documento ou qualquer"},
-                },
-                "required": ["termo"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "gerar_relatorio",
-            "description": "Gera um relatório PDF com dados do banco e retorna o link para download.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tipo": {
-                        "type": "string",
-                        "enum": ["pessoas_por_cidade", "listagem_geral", "personalizado"],
-                    },
-                    "filtros": {
-                        "type": "object",
-                        "description": "Filtros opcionais: cidade, estado, bairro",
-                    },
-                    "titulo": {"type": "string", "description": "Título personalizado"},
-                },
-                "required": ["tipo"],
-            },
-        },
-    },
-]
+            "required": ["tipo_relatorio"]
+        }
+    ),
+])
 
 
 class AIService:
     def __init__(self, db_service, gdrive_service, report_service):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4o")
-        self.db = db_service
-        self.drive = gdrive_service
-        self.report = report_service
-        self.conversation_history: dict[str, list] = {}
+        self.db_service = db_service
+        self.gdrive_service = gdrive_service
+        self.report_service = report_service
 
-    def process_message(self, sender: str, message: str) -> str:
-        """Processa a mensagem do usuário e retorna a resposta."""
-        try:
-            history = self.conversation_history.get(sender, [])
-            history.append({"role": "user", "content": message})
-
-            # Mantém no máximo as últimas 20 mensagens
-            if len(history) > 20:
-                history = history[-20:]
-
-            response_text = self._call_openai(history)
-
-            history.append({"role": "assistant", "content": response_text})
-            self.conversation_history[sender] = history
-
-            return response_text
-
-        except Exception as e:
-            logger.error(f"Erro ao processar mensagem: {e}", exc_info=True)
-            return "Desculpe, ocorreu um erro interno. Tente novamente em instantes."
-
-    def _call_openai(self, messages: list) -> str:
-        """Chama a API da OpenAI com suporte a function calling."""
-        full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-
-        response = self.client.chat.completions.create(
-            model=self.model,
-            tools=TOOLS,
-            tool_choice="auto",
-            messages=full_messages,
+        self.model = genai.GenerativeModel(
+            model_name=MODEL_NAME,
+            system_instruction=SYSTEM_PROMPT,
+            tools=[TOOLS],
         )
+        # Histórico de conversa por usuário (em memória)
+        self._sessions: dict[str, list] = {}
 
-        # Loop até não haver mais chamadas de função
-        while response.choices[0].finish_reason == "tool_calls":
-            msg = response.choices[0].message
-            full_messages.append(msg)  # adiciona a resposta do assistente com tool_calls
+    def _get_history(self, sender: str) -> list:
+        return self._sessions.get(sender, [])
 
-            for tool_call in msg.tool_calls:
-                fn_name = tool_call.function.name
-                fn_args = json.loads(tool_call.function.arguments)
+    def _save_history(self, sender: str, history: list):
+        # Mantém apenas as últimas 20 mensagens para não estourar contexto
+        self._sessions[sender] = history[-20:]
 
-                logger.info(f"Chamando função: {fn_name} | args: {fn_args}")
-                result = self._execute_function(fn_name, fn_args)
-
-                full_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(result, ensure_ascii=False),
-                })
-
-            response = self.client.chat.completions.create(
-                model=self.model,
-                tools=TOOLS,
-                tool_choice="auto",
-                messages=full_messages,
-            )
-
-        return response.choices[0].message.content or "Não consegui gerar uma resposta."
-
-    def _execute_function(self, name: str, args: dict) -> dict:
-        """Executa a função solicitada pelo modelo."""
+    def _execute_tool(self, tool_name: str, tool_args: dict) -> str:
+        """Executa a ferramenta chamada pelo Gemini e retorna o resultado como string."""
         try:
-            if name == "buscar_endereco":
-                return self.db.buscar_endereco(**args)
-
-            elif name == "contar_pessoas_localidade":
-                return self.db.contar_pessoas_localidade(**args)
-
-            elif name == "listar_pessoas_localidade":
-                return self.db.listar_pessoas_localidade(**args)
-
-            elif name == "buscar_no_drive":
-                return self.drive.buscar(
-                    termo=args["termo"],
-                    tipo=args.get("tipo", "qualquer"),
+            if tool_name == "buscar_no_banco":
+                result = self.db_service.query(
+                    tool_args.get("query_type"),
+                    tool_args.get("parametro", "")
                 )
+                return json.dumps(result, ensure_ascii=False, default=str)
 
-            elif name == "gerar_relatorio":
-                dados = self.db.buscar_dados_relatorio(
-                    tipo=args["tipo"],
-                    filtros=args.get("filtros", {}),
+            elif tool_name == "buscar_no_drive":
+                result = self.gdrive_service.search(tool_args.get("nome_arquivo", ""))
+                return json.dumps(result, ensure_ascii=False, default=str)
+
+            elif tool_name == "gerar_relatorio_pdf":
+                url = self.report_service.generate(
+                    tool_args.get("tipo_relatorio"),
+                    tool_args.get("filtro", "")
                 )
-                link = self.report.gerar(
-                    tipo=args["tipo"],
-                    dados=dados,
-                    titulo=args.get("titulo"),
-                )
-                return {"link": link, "registros": len(dados)}
+                return json.dumps({"url_download": url}, ensure_ascii=False)
 
             else:
-                return {"erro": f"Função desconhecida: {name}"}
+                return json.dumps({"erro": f"Ferramenta '{tool_name}' não reconhecida."})
 
         except Exception as e:
-            logger.error(f"Erro na função {name}: {e}", exc_info=True)
-            return {"erro": str(e)}
+            logger.error(f"Erro ao executar ferramenta '{tool_name}': {e}", exc_info=True)
+            return json.dumps({"erro": str(e)})
+
+    def process_message(self, sender: str, message: str) -> str:
+        """Processa uma mensagem do WhatsApp e retorna a resposta do bot."""
+        try:
+            history = self._get_history(sender)
+            chat = self.model.start_chat(history=history)
+
+            response = chat.send_message(message)
+
+            # Loop de Function Calling — o Gemini pode chamar ferramentas em sequência
+            while True:
+                # Verifica se há chamadas de função na resposta
+                fn_calls = [
+                    part.function_call
+                    for candidate in response.candidates
+                    for part in candidate.content.parts
+                    if part.function_call.name  # parte não vazia
+                ]
+
+                if not fn_calls:
+                    break  # Sem mais chamadas de função, sai do loop
+
+                # Executa cada ferramenta e envia os resultados de volta
+                tool_results = []
+                for fn_call in fn_calls:
+                    logger.info(f"Gemini chamou ferramenta: {fn_call.name} com args: {dict(fn_call.args)}")
+                    result_str = self._execute_tool(fn_call.name, dict(fn_call.args))
+                    tool_results.append(
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=fn_call.name,
+                                response={"result": result_str}
+                            )
+                        )
+                    )
+
+                response = chat.send_message(tool_results)
+
+            # Extrai o texto final da resposta
+            final_text = ""
+            for candidate in response.candidates:
+                for part in candidate.content.parts:
+                    if hasattr(part, "text") and part.text:
+                        final_text += part.text
+
+            if not final_text:
+                final_text = "Desculpe, não consegui processar sua mensagem. Tente novamente."
+
+            # Salva histórico atualizado
+            self._save_history(sender, chat.history)
+            return final_text.strip()
+
+        except Exception as e:
+            logger.error(f"Erro ao processar mensagem de {sender}: {e}", exc_info=True)
+            return "Ocorreu um erro interno. Por favor, tente novamente em alguns instantes."
