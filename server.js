@@ -122,9 +122,13 @@ function startServer() {
               <label>String de Conexão PostgreSQL (DATABASE_URL)</label>
               <input type="text" name="DATABASE_URL" value="${env.DATABASE_URL || ''}" placeholder="postgres://usuario:senha@host:porta/banco">
 
-              <label>ID da Planilha Google (Sheets)</label>
+              <label>📊 ID da Planilha Google (Sheets)</label>
               <input type="text" name="SPREADSHEET_ID" value="${env.SPREADSHEET_ID || ''}" placeholder="Ex: 1BxiMVs0XRA5nFMdKvXdBAnbn...">
 
+              <label>📁 ID da Pasta do Google Drive (GOOGLE_DRIVE_FOLDER_ID)</label>
+              <input type="text" name="GOOGLE_DRIVE_FOLDER_ID" value="${env.GOOGLE_DRIVE_FOLDER_ID || ''}" placeholder="Ex: 1aBcDeFgHiJkLmNoPqRsTuVwXyZ...">
+              <div class="hint">O ID fica na barra de endereços do navegador quando você abre a pasta no Drive.</div>
+              
               <h3>4. Integração Google Cloud</h3>
               <label>Credenciais de Conta de Serviço (.json)</label>
               <div class="file-box">
