@@ -6,13 +6,12 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const querystring = require("querystring");
-const { exec } = require("child_process"); // Adicionado para abrir as janelas
+const { exec } = require("child_process");
 
 const REPORTS_DIR = path.join(__dirname, process.env.REPORTS_DIR || "reports");
 const ENV_PATH = path.join(__dirname, ".env");
 const GROUPS_PATH = path.join(__dirname, "grupos.json");
 
-// Define a porta inicial
 let currentPort = parseInt(process.env.PORT || 3000, 10);
 
 if (!fs.existsSync(ENV_PATH)) {
@@ -34,7 +33,9 @@ function getEnvVariables() {
 function saveEnvVariables(newEnv) {
   let content = "";
   for (const [key, value] of Object.entries(newEnv)) {
-    content += `${key}=${value}\n`;
+    // Garante que não haverá quebras de linha dentro do valor de cada variável no arquivo final
+    const cleanedValue = value.replace(/\r?\n|\r/g, "");
+    content += `${key}=${cleanedValue}\n`;
   }
   fs.writeFileSync(ENV_PATH, content, "utf8");
 }
@@ -42,7 +43,6 @@ function saveEnvVariables(newEnv) {
 function startServer() {
   const server = http.createServer((req, res) => {
     
-    // Rota da Interface de Configuração (GET)
     if (req.url === "/config" && req.method === "GET") {
       const env = getEnvVariables();
       
@@ -84,9 +84,11 @@ function startServer() {
             h1 { color: #1a1a2e; text-align: center; }
             label { font-weight: bold; display: block; margin-top: 20px; }
             input[type="text"], input[type="password"], textarea, select { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+            input[type="file"] { margin-top: 5px; font-size: 14px; }
             button { background: #d32f2f; color: white; border: none; padding: 15px; width: 100%; margin-top: 25px; font-size: 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
             button:hover { background: #b71c1c; }
             .hint { font-size: 12px; color: #666; margin-top: 4px; }
+            .file-upload-box { background: #f9f9f9; padding: 15px; border: 1px dashed #bbb; border-radius: 4px; margin-top: 5px; }
           </style>
         </head>
         <body>
@@ -107,19 +109,44 @@ function startServer() {
               <label>📊 ID da Planilha Google</label>
               <input type="text" name="SPREADSHEET_ID" value="${env.SPREADSHEET_ID || ''}">
               
-              <label>🔑 Credenciais JSON do Google Cloud</label>
-              <textarea name="GOOGLE_CREDENTIALS_JSON" rows="4" placeholder='{"type": "service_account", ...}'>${env.GOOGLE_CREDENTIALS_JSON || ''}</textarea>
+              <label>🔑 Credenciais JSON do Google Cloud (Service Account)</label>
+              <div class="file-upload-box">
+                <span style="font-size: 13px; color: #555; display: block; margin-bottom: 5px;">Selecione o arquivo .json baixado para conversão automática:</span>
+                <input type="file" id="json_file" accept=".json">
+              </div>
+              <textarea id="google_json_textarea" name="GOOGLE_CREDENTIALS_JSON" rows="4" style="margin-top: 10px;" placeholder='O conteúdo do arquivo aparecerá aqui formatado em uma única linha...' required>${env.GOOGLE_CREDENTIALS_JSON || ''}</textarea>
+              <div class="hint">O arquivo enviado acima será automaticamente transformado em uma linha contínua segura para o arquivo .env.</div>
 
               <button type="submit">Salvar e Reiniciar Bot</button>
             </form>
           </div>
+
+          <script>
+            // Escuta o upload do arquivo JSON
+            document.getElementById('json_file').addEventListener('change', function(e) {
+              const file = e.target.files[0];
+              if (!file) return;
+              
+              const reader = new FileReader();
+              reader.onload = function(evt) {
+                try {
+                  const jsonObj = JSON.parse(evt.target.result);
+                  // Minimiza todo o JSON transformando-o em apenas uma linha contínua
+                  document.getElementById('google_json_textarea').value = JSON.stringify(jsonObj);
+                } catch (err) {
+                  alert('Erro: O arquivo selecionado não contém um JSON válido. Certifique-se de carregar o arquivo .json baixado corretamente do painel do Google Cloud.');
+                  e.target.value = ''; // Limpa o input em caso de erro
+                }
+              };
+              reader.readAsText(file);
+            });
+          </script>
         </body>
         </html>
       `);
       return;
     }
 
-    // Rota para salvar configurações (POST)
     if (req.url === "/config" && req.method === "POST") {
       let body = "";
       req.on("data", chunk => { body += chunk.toString(); });
@@ -141,7 +168,6 @@ function startServer() {
       return;
     }
 
-    // Rota dos relatórios
     if (req.url.startsWith("/reports/")) {
       const filename = path.basename(req.url.replace("/reports/", ""));
       const filepath = path.join(REPORTS_DIR, filename);
@@ -164,7 +190,6 @@ function startServer() {
     res.end();
   });
 
-  // SE A PORTA ESTIVER OCUPADA, PULA PARA A PRÓXIMA
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
       console.log(`⚠️  Porta ${currentPort} ocupada. Tentando a porta ${currentPort + 1}...`);
@@ -175,14 +200,9 @@ function startServer() {
     }
   });
 
-  // QUANDO A PORTA FUNCIONAR, ELE ABRE OS PROGRAMAS
   server.listen(currentPort, () => {
-    console.log(`\n🛠️  Painel de Configuração aberto em: http://localhost:${currentPort}/config`);
-    
-    // Abre o Cloudflare Tunnel na porta certa automaticamente
+    console.log(`\n🛠  Painel de Configuração aberto em: http://localhost:${currentPort}/config`);
     exec(`start "Cloudflare Tunnel" cmd /c "cloudflared tunnel --url http://localhost:${currentPort}"`);
-    
-    // Abre o navegador automaticamente
     exec(`start http://localhost:${currentPort}/config`);
   });
 }

@@ -18,30 +18,31 @@ Antes de rodar o bot, você precisa ter dois programas instalados no seu computa
 ### Passo 2: Executar o Bot
 1. Acesse a pasta onde estão os arquivos deste bot.
 2. Dê um **duplo clique no arquivo `iniciar.bat`**.
-3. O script vai instalar as dependências automaticamente e abrirá o navegador em uma **Interface de Configuração** (`http://localhost:3000/config`).
+3. O script vai instalar as dependências automaticamente, buscará de forma inteligente uma porta livre e abrirá o seu navegador em uma **Interface de Configuração** (`http://localhost:3000/config` ou similar).
 
-### Passo 3: Preencher o Painel de Configuração
-Na tela que se abrir no seu navegador, você precisará preencher os seguintes campos:
+### Passo 3: Preencher o Painel de Configuração Inteligente
+Na tela que se abrir no seu navegador, você preencherá as chaves necessárias sem precisar editar códigos:
 
 | Campo | O que é e onde conseguir? |
 |---|---|
-| **API Key da IA** | A "chave" para a inteligência artificial funcionar. Crie uma conta no [Groq Console](https://console.groq.com/keys) ou no [Google AI Studio](https://aistudio.google.com/app/apikey) e crie uma API Key. Custa R$ 0,00. |
-| **DATABASE_URL** | Link do seu banco de dados PostgreSQL. Recomendamos o site [Neon.tech](https://neon.tech) (gratuito). Após criar um projeto lá, copie a "Connection String". |
-| **SPREADSHEET_ID** | Abra sua planilha do Google Sheets. O ID é o código gigante que fica na barra de endereços, entre `/d/` e `/edit`. |
-| **GOOGLE CREDENTIALS** | Crie um Projeto no Google Cloud, gere uma "Conta de Serviço" (Service Account) e crie uma chave JSON. Cole todo o conteúdo do arquivo JSON aqui. |
+| **📱 Seleção do Grupo** | Menu dinâmico para escolher o grupo monitorado (ficará disponível após o Passo 4). |
+| **🧠 API Key da IA** | A "chave" para a inteligência artificial funcionar. Crie uma conta no [Groq Console](https://console.groq.com/keys) e gere uma API Key de graça. |
+| **🗄️ Link do Banco de Dados** | Link do seu banco de dados PostgreSQL. Recomendamos o site [Neon.tech](https://neon.tech) (gratuito). Copie e cole a "Connection String" de lá. |
+| **📊 ID da Planilha Google** | Abra sua planilha do Google Sheets. O ID é o código gigante presente na barra de endereços da URL, entre `/d/` e `/edit`. |
+| **🔑 Credenciais JSON** | **Fácil e Automático!** Clique no botão de upload e escolha o arquivo `.json` da sua Service Account (Conta de Serviço) baixado do Google Cloud. A interface converte o arquivo inteiro em uma linha única para você! |
 
-**Muito Importante:** Para o bot ler sua planilha do Google, vá na sua planilha -> Clique em "Compartilhar" -> e adicione o e-mail que está dentro do seu arquivo JSON do Google Cloud.
+**Muito Importante:** Para o bot ler sua planilha do Google, vá na sua planilha -> Clique em "Compartilhar" -> e adicione o e-mail da sua Service Account (ex: `seu-projeto@...iam.gserviceaccount.com`).
 
-Após preencher, clique em **Salvar e Reiniciar Bot**. A página se encerrará. Feche a janela preta do terminal do bot e abra o `iniciar.bat` novamente.
+Após preencher, clique em **Salvar e Reiniciar Bot**. A página fechará. Encerre a janela preta do terminal do bot e abra o `iniciar.bat` novamente.
 
 ### Passo 4: Conectar ao WhatsApp
-Ao rodar o `iniciar.bat` pela segunda vez:
+Ao rodar o `iniciar.bat` após preencher os dados iniciais do painel:
 1. Uma janela preta (terminal) mostrará um **QR Code**.
-2. Abra o WhatsApp no seu celular » Três pontinhos » Dispositivos conectados » Conectar dispositivo.
+2. Abra o WhatsApp no seu celular » Dispositivos conectados » Conectar dispositivo.
 3. Escaneie a tela do seu computador.
-4. O bot enviará no terminal a lista de Grupos que você participa com seus respectivos IDs. Copie o ID do grupo desejado, volte na interface `http://localhost:3000/config` e cole no campo **GROUP_ID**. Salve novamente.
+4. O bot se conectará e salvará os grupos ativos na memória. Recarregue a página de configuração no seu navegador (`http://localhost:3000/config`), selecione o seu grupo no menu de escolha que apareceu e clique em Salvar mais uma vez.
 
-Pronto! Agora o bot só responderá dentro daquele grupo específico.
+Pronto! Agora o bot está pronto e monitorando o grupo escolhido.
 
 ---
 
