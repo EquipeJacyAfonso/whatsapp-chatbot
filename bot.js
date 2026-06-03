@@ -1,6 +1,6 @@
 /**
  * Bot WhatsApp - Administração Jacy Afonso (PT/DF)
- * Arquitetura Autônoma Plug-and-Play com Sincronização Real-Time
+ * Arquitetura Autônoma Plug-and-Play com Logs na Web
  */
 
 require("dotenv").config();
@@ -19,20 +19,25 @@ const fs = require("fs");
 const { processMessage } = require("./services/ai");
 const { startServer, getIo } = require("./server");
 
-// Caminhos baseados no diretório de execução para compatibilidade com .exe
 const ROOT_DIR = process.cwd();
 const AUTH_DIR = path.join(ROOT_DIR, "auth_session");
 const GROUP_ID = process.env.GROUP_ID || "";
 const logger = pino({ level: "silent" });
 
+// Função auxiliar para enviar logs para a Interface Web
+function sendLog(type, message) {
+  const io = getIo();
+  if (io) io.emit("log", { type, msg: message });
+  console.log(`[${type.toUpperCase()}] ${message}`); // Mantém no console para dev
+}
+
 async function startBot() {
-  // Inicializa o servidor dinâmico de UI + WebSockets
   startServer();
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
 
-  console.log("\n[SISTEMA] Inicializando núcleo do WhatsApp...");
+  sendLog('sys', 'A iniciar núcleo de comunicação com a Meta/WhatsApp...');
 
   const sock = makeWASocket({
     version,
@@ -50,23 +55,17 @@ async function startBot() {
 
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    const io = getIo(); // Conexão com o frontend web
+    const io = getIo();
 
     if (qr) {
-      console.log("\n[SISTEMA] Novo QR Code gerado! Abra o painel no navegador.");
+      sendLog('sys', 'Novo QR Code gerado. A aguardar leitura do utilizador.');
       try {
         const qrImageBase64 = await qrcode.toDataURL(qr);
-        if (io) io.emit("qr", qrImageBase64); // Manda o QR Code pro navegador
-      } catch (err) {
-        console.error("Erro ao gerar QR Code para a UI:", err.message);
-      }
+        if (io) io.emit("qr", qrImageBase64);
+      } catch (err) {}
     }
 
     if (connection === "open") {
-      console.log("✅ Conexão estabelecida com o WhatsApp com sucesso!");
-      if (io) io.emit("connected"); // Manda sinal verde pro navegador
-
-      // Coleta grupos e injeta DIRETO NA TELA DO USUÁRIO via WebSocket
       try {
         const groups = await sock.groupFetchAllParticipating();
         const groupList = Object.values(groups).map((g) => ({
@@ -74,32 +73,25 @@ async function startBot() {
           name: g.subject,
         }));
         
-        // Salva backup local e envia para a interface gráfica
         fs.writeFileSync(path.join(ROOT_DIR, "grupos.json"), JSON.stringify(groupList, null, 2));
-        console.log("📊 Sincronização de grupos concluída!");
-        
-        if (io) io.emit("groups_ready", groupList); // <-- O PULO DO GATO AQUI
+        if (io) io.emit("groups_ready", groupList); 
 
       } catch (err) {
-        console.error("Falha ao mapear grupos:", err.message);
+        sendLog('sys', `Falha ao mapear grupos: ${err.message}`);
       }
 
-      if (!GROUP_ID) {
-        console.log("\n[ATENÇÃO] Nenhum grupo foi selecionado ainda.");
-      } else {
-        console.log(`📡 Monitorando mensagens ativas no grupo ID: ${GROUP_ID}\n`);
+      if (GROUP_ID) {
+        sendLog('sys', `Monitorização ativa no grupo configurado.`);
       }
     }
 
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = code !== DisconnectReason.loggedOut;
-
-      if (shouldReconnect) {
-        console.log("🔄 Conexão interrompida. Tentando reconectar automaticamente...");
+      if (code !== DisconnectReason.loggedOut) {
+        sendLog('sys', 'Conexão interrompida (Possível queda de internet). A reconectar em 3s...');
         setTimeout(startBot, 3000);
       } else {
-        console.log("❌ Sessão encerrada. Delete a pasta auth_session/ para gerar um novo QR Code.");
+        sendLog('sys', 'Sessão terminada pelo telemóvel. Elimine a pasta auth_session para reiniciar.');
       }
     }
   });
@@ -123,20 +115,27 @@ async function startBot() {
 
         if (!text) continue;
 
-        const sender = msg.pushName || msg.key.participant?.split("@")[0] || "Usuário";
-        console.log(`💬 [${sender}]: ${text.substring(0, 60)}...`);
+        const sender = msg.pushName || msg.key.participant?.split("@")[0] || "Utilizador";
+        
+        // Regista a entrada no Dashboard Web
+        sendLog('user', `${sender}: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
 
         await sock.sendPresenceUpdate("composing", from);
+        
+        sendLog('sys', `A processar resposta via IA para ${sender}...`);
         const resposta = await processMessage(sender, text);
         
         await sock.sendMessage(from, { text: resposta });
         await sock.sendPresenceUpdate("paused", from);
 
+        // Regista a saída no Dashboard Web
+        sendLog('bot', `Bot respondeu: ${resposta.substring(0, 50)}...`);
+
       } catch (err) {
-        console.error("Erro no processamento da mensagem:", err.message);
+        sendLog('sys', `Erro ao processar mensagem: ${err.message}`);
       }
     }
   });
 }
 
-startBot().catch(console.error);
+startBot().catch(err => console.error("Erro Crítico:", err));
