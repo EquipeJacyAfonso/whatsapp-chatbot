@@ -1,5 +1,6 @@
 /**
  * Servidor HTTP: Painel Administrativo de Configuração Visual (.env)
+ * COM SUPORTE A WEBSOCKETS (Socket.IO) PARA QR CODE EM TEMPO REAL
  */
 
 const http = require("http");
@@ -7,12 +8,14 @@ const fs = require("fs");
 const path = require("path");
 const querystring = require("querystring");
 const { exec } = require("child_process");
+const { Server } = require("socket.io"); // <-- NOVO
 
 const REPORTS_DIR = path.join(__dirname, process.env.REPORTS_DIR || "reports");
 const ENV_PATH = path.join(__dirname, ".env");
 const GROUPS_PATH = path.join(__dirname, "grupos.json");
 
 let currentPort = parseInt(process.env.PORT || 3000, 10);
+let io; // Variável global para o Socket.IO
 
 if (!fs.existsSync(ENV_PATH)) {
   fs.writeFileSync(ENV_PATH, "");
@@ -50,13 +53,7 @@ function startServer() {
     if (req.url === "/config" && req.method === "GET") {
       const env = getEnvVariables();
       
-      let groupsHtml = `
-        <div style="background: #fff3cd; padding: 12px; border-radius: 6px; border: 1px solid #ffe69c; color: #664d03; margin-top: 5px; font-size: 14px;">
-          ⏳ <b>Aguardando conexão com o WhatsApp...</b><br>
-          Abra o terminal (tela preta), escaneie o QR Code com o seu celular e depois <a href="/config" style="color:#664d03; font-weight:bold; text-decoration: underline;">atualize esta página</a> para escolher o grupo.
-        </div>
-      `;
-
+      let groupsHtml = ``;
       if (fs.existsSync(GROUPS_PATH)) {
         try {
           const groups = JSON.parse(fs.readFileSync(GROUPS_PATH, "utf8"));
@@ -95,29 +92,40 @@ function startServer() {
             .hint { font-size: 12px; color: #64748b; margin-top: 5px; }
             .file-box { background: #f1f5f9; padding: 15px; border: 2px dashed #cbd5e1; border-radius: 6px; margin-top: 6px; text-align: center; }
             .provider-select { background: #e2e8f0; font-weight: bold; }
+            
+            /* Status Box Dynamics */
+            #status-box { background: #fff3cd; padding: 15px; border-radius: 8px; border: 1px solid #ffe69c; color: #664d03; margin-top: 15px; text-align: center; transition: all 0.3s; }
+            #qr-image { margin-top: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: none; margin-left: auto; margin-right: auto; }
           </style>
+          
+          <script src="/socket.io/socket.io.js"></script>
         </head>
         <body>
           <div class="container">
             <h1>⚙️ Painel de Configuração — Jacy Bot</h1>
+            
+            <div id="status-box">
+              <span id="status-text">⏳ <b>Aguardando comunicação com o núcleo do WhatsApp...</b></span>
+              <img id="qr-image" src="" alt="QR Code WhatsApp">
+            </div>
+
             <form action="/config" method="POST">
               
               <h3>1. Vinculação de Canal</h3>
               <label>Grupo do WhatsApp Monitorado</label>
-              ${groupsHtml}
+              ${groupsHtml || '<div class="hint" style="color:#ef4444;">Nenhum grupo sincronizado ainda. Conecte o WhatsApp primeiro.</div>'}
 
-              <h3>2. Provedor de Inteligência Artificial (Mais Econômicos)</h3>
+              <h3>2. Provedor de Inteligência Artificial</h3>
               <label>Escolha o Provedor Ativo</label>
               <select name="AI_PROVIDER" class="provider-select">
-                <option value="groq" ${env.AI_PROVIDER === 'groq' ? 'selected' : ''}>Groq / Llama 3 (Custo: Gratuito / Mais Rápido)</option>
-                <option value="gemini" ${env.AI_PROVIDER === 'gemini' ? 'selected' : ''}>Google AI Studio / Gemini Flash (Custo: Gratuito / Maior Contexto)</option>
-                <option value="anthropic" ${env.AI_PROVIDER === 'anthropic' ? 'selected' : ''}>Anthropic / Claude 3.5 Haiku (Custo: Ultra Baixo / Mais Inteligente)</option>
+                <option value="groq" ${env.AI_PROVIDER === 'groq' ? 'selected' : ''}>Groq / Llama 3 (Custo: Gratuito)</option>
+                <option value="gemini" ${env.AI_PROVIDER === 'gemini' ? 'selected' : ''}>Gemini Flash (Custo: Gratuito)</option>
+                <option value="anthropic" ${env.AI_PROVIDER === 'anthropic' ? 'selected' : ''}>Claude 3.5 Haiku (Ultra Baixo)</option>
               </select>
 
               <label>Chave de API (API Key)</label>
-              <input type="password" name="AI_API_KEY" value="${env.AI_API_KEY || ''}" placeholder="Cole sua chave aqui (gsk_..., AIza..., or sk-ant-...)">
-              <div class="hint">Obtenha sua chave no console da IA selecionada.</div>
-
+              <input type="password" name="AI_API_KEY" value="${env.AI_API_KEY || ''}" placeholder="Cole sua chave aqui (gsk_..., AIza..., ou sk-ant-...)">
+              
               <h3>3. Armazenamento e Bancos de Dados</h3>
               <label>String de Conexão PostgreSQL (DATABASE_URL)</label>
               <input type="text" name="DATABASE_URL" value="${env.DATABASE_URL || ''}" placeholder="postgres://usuario:senha@host:porta/banco">
@@ -127,21 +135,20 @@ function startServer() {
 
               <label>📁 ID da Pasta do Google Drive (GOOGLE_DRIVE_FOLDER_ID)</label>
               <input type="text" name="GOOGLE_DRIVE_FOLDER_ID" value="${env.GOOGLE_DRIVE_FOLDER_ID || ''}" placeholder="Ex: 1aBcDeFgHiJkLmNoPqRsTuVwXyZ...">
-              <div class="hint">O ID fica na barra de endereços do navegador quando você abre a pasta no Drive.</div>
               
               <h3>4. Integração Google Cloud</h3>
-              <label>Credenciais de Conta de Serviço (.json)</label>
               <div class="file-box">
                 <span style="font-size: 13px; color: #475569; display: block; margin-bottom: 8px;">Arraste ou selecione o arquivo JSON original do Google:</span>
                 <input type="file" id="upload_json" accept=".json">
               </div>
-              <textarea id="output_json" name="GOOGLE_CREDENTIALS_JSON" rows="3" style="margin-top: 12px; font-family: monospace; font-size: 11px;" placeholder="O arquivo enviado acima será convertido em uma única linha contínua aqui automaticamente..." required>${env.GOOGLE_CREDENTIALS_JSON || ''}</textarea>
+              <textarea id="output_json" name="GOOGLE_CREDENTIALS_JSON" rows="3" style="margin-top: 12px; font-family: monospace; font-size: 11px;" placeholder="O arquivo enviado acima será convertido aqui..." required>${env.GOOGLE_CREDENTIALS_JSON || ''}</textarea>
 
               <button type="submit">💾 Salvar Configurações e Aplicar</button>
             </form>
           </div>
 
           <script>
+            // Lógica do arquivo JSON
             document.getElementById('upload_json').addEventListener('change', function(e) {
               const file = e.target.files[0];
               if (!file) return;
@@ -156,6 +163,34 @@ function startServer() {
                 }
               };
               reader.readAsText(file);
+            });
+
+            // Comunicação Real-time (WebSocket)
+            const socket = io();
+            const statusBox = document.getElementById('status-box');
+            const statusText = document.getElementById('status-text');
+            const qrImage = document.getElementById('qr-image');
+
+            socket.on('qr', (base64Data) => {
+              statusBox.style.background = '#e0f2fe';
+              statusBox.style.borderColor = '#bae6fd';
+              statusBox.style.color = '#0c4a6e';
+              statusText.innerHTML = '📱 <b>Abra o WhatsApp no celular e escaneie o código abaixo:</b>';
+              qrImage.src = base64Data;
+              qrImage.style.display = 'block';
+            });
+
+            socket.on('connected', () => {
+              statusBox.style.background = '#dcfce7';
+              statusBox.style.borderColor = '#bbf7d0';
+              statusBox.style.color = '#14532d';
+              statusText.innerHTML = '✅ <b>WhatsApp conectado com sucesso!</b> (Atualizando grupos...)';
+              qrImage.style.display = 'none';
+              
+              // Recarrega a página automaticamente após 3 segundos para popular o select de grupos
+              setTimeout(() => {
+                window.location.reload();
+              }, 3000);
             });
           </script>
         </body>
@@ -178,11 +213,12 @@ function startServer() {
         res.end(`
           <div style="font-family: sans-serif; text-align: center; margin-top: 60px; color: #1e293b;">
             <h2 style="color: #10b981;">✅ Configurações Salvas com Sucesso!</h2>
-            <p>A janela do terminal do bot foi encerrada para limpeza de cache.</p>
-            <p style="font-weight: bold; color: #475569;">Por favor, execute o arquivo <u>iniciar.bat</u> novamente na sua pasta para ativar o bot.</p>
+            <p>O bot será reiniciado com as novas configurações.</p>
+            <p style="font-weight: bold; color: #475569;">Pode fechar esta janela ou aguardar a reconexão automática do painel.</p>
           </div>
+          <script>setTimeout(() => window.location.href="/config", 4000);</script>
         `);
-        setTimeout(() => process.exit(0), 2500); // Mata o processo atual para forçar o reinício limpo
+        setTimeout(() => process.exit(0), 1500);
       });
       return;
     }
@@ -210,6 +246,12 @@ function startServer() {
     res.end();
   });
 
+  // Inicializa o Socket.IO acoplado ao Servidor HTTP
+  io = new Server(server);
+  io.on("connection", (socket) => {
+    // console.log("Interface Web conectada ao Socket.");
+  });
+
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
       console.log(`⚠️  Porta ${currentPort} ocupada. Tentando automaticamente a porta ${currentPort + 1}...`);
@@ -225,10 +267,14 @@ function startServer() {
     console.log(`🛠️  PAINEL ADMIN ATIVO: http://localhost:${currentPort}/config`);
     console.log(`=============================================================`);
     
-    // Dispara a abertura automática das janelas na porta correta
-    exec(`start "Cloudflare Tunnel" cmd /c "cloudflared tunnel --url http://localhost:${currentPort}"`);
+    // Abre no navegador silenciosamente
     exec(`start http://localhost:${currentPort}/config`);
   });
 }
 
-module.exports = { startServer };
+// Função para permitir que o bot.js pegue a instância do Socket.IO e envie eventos
+function getIo() {
+  return io;
+}
+
+module.exports = { startServer, getIo };

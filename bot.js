@@ -1,6 +1,6 @@
 /**
  * Bot WhatsApp - Administração Jacy Afonso (PT/DF)
- * Arquitetura Autônoma Plug-and-Play via Baileys
+ * Arquitetura Autônoma Plug-and-Play via Baileys com UI Dinâmica
  */
 
 require("dotenv").config();
@@ -11,20 +11,20 @@ const {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
 } = require("@whiskeysockets/baileys");
-const qrcode = require("qrcode-terminal");
+const qrcode = require("qrcode"); // <-- MUDOU: Agora usamos o gerador de imagem Base64
 const pino = require("pino");
 const path = require("path");
 const fs = require("fs");
 
 const { processMessage } = require("./services/ai");
-const { startServer } = require("./server");
+const { startServer, getIo } = require("./server"); // <-- MUDOU: Importa getIo para falar com a Web
 
 const logger = pino({ level: "silent" });
 const AUTH_DIR = path.join(__dirname, "auth_session");
 const GROUP_ID = process.env.GROUP_ID || "";
 
 async function startBot() {
-  // Inicializa o servidor dinâmico de configurações e relatórios
+  // Inicializa o servidor dinâmico de configurações, relatórios e WebSockets
   startServer();
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -38,7 +38,7 @@ async function startBot() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    printQRInTerminal: false,
+    printQRInTerminal: false, // Desligamos o print no terminal
     logger,
     browser: ["Jacy Bot Admin", "Chrome", "1.0.0"],
     syncFullHistory: false,
@@ -48,17 +48,24 @@ async function startBot() {
 
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
+    const io = getIo(); // Puxa a conexão com o navegador web
 
     if (qr) {
-      console.log("\n=============================================================");
-      console.log("📱 QR CODE DISPONÍVEL! ESCANEIE COM SEU CELULAR NO WHATSAPP:");
-      console.log("=============================================================\n");
-      qrcode.generate(qr, { small: true });
-      console.log("\n👉 Vá em: WhatsApp > Aparelhos Conectados > Conectar Aparelho\n");
+      console.log("\n[SISTEMA] Novo QR Code gerado! Abra o Painel Web (Navegador) para escanear.\n");
+      try {
+        // Converte o texto do QR Code em uma imagem Base64
+        const qrImageBase64 = await qrcode.toDataURL(qr);
+        // Emite a imagem para o navegador exibir instantaneamente
+        if (io) io.emit("qr", qrImageBase64);
+      } catch (err) {
+        console.error("Erro ao gerar QR Code para a UI:", err.message);
+      }
     }
 
     if (connection === "open") {
       console.log("✅ Conexão estabelecida com o WhatsApp com sucesso!");
+      // Emite sinal verde para o painel web mudar o texto
+      if (io) io.emit("connected");
 
       // Coleta grupos vigentes e salva para alimentação do Painel Web
       try {
@@ -68,7 +75,7 @@ async function startBot() {
           name: g.subject,
         }));
         fs.writeFileSync(path.join(__dirname, "grupos.json"), JSON.stringify(groupList, null, 2));
-        console.log("📊 Sincronização de grupos concluída! Atualize o painel no seu navegador.");
+        console.log("📊 Sincronização de grupos concluída!");
       } catch (err) {
         console.error("Falha ao mapear grupos:", err.message);
       }
