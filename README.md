@@ -1,90 +1,68 @@
-# 🤖 Bot WhatsApp — Jacy Afonso (PT/DF)
+# 🤖 Bot WhatsApp Administrativo — Jacy Afonso (PT/DF)
 
-Bot administrativo para grupo do WhatsApp. Sem Docker, sem servidor externo — roda direto no Windows.
+Este é um chatbot inteligente para WhatsApp criado para auxiliar na administração de campanhas e mandatos. Ele lê dados do **Google Sheets**, consulta bancos de dados (**PostgreSQL**), lê arquivos **PDF** de prestação de contas e gera relatórios automáticos dentro de grupos do WhatsApp.
 
-**Stack:** Baileys · Gemini Flash · PostgreSQL (Neon) · Google Sheets · Cloudflare Tunnel
+Tudo isso rodando de forma econômica e acessível. A Inteligência Artificial utilizada (Llama 3 via Groq ou Google Gemini Flash) possui planos gratuitos extremamente generosos.
 
 ---
 
-## ⚡ Instalação rápida
+## 🛠️ Como instalar (Passo a Passo Detalhado)
 
-### 1. Pré-requisitos
-- **Node.js** (qualquer versão ≥ 18) → https://nodejs.org
-- **Cloudflared** → `winget install Cloudflare.cloudflared` no PowerShell
+Você não precisa entender de programação para rodar o bot. Siga estas etapas:
 
-### 2. Configurar
+### Passo 1: Baixar os programas essenciais
+Antes de rodar o bot, você precisa ter dois programas instalados no seu computador Windows:
+1. **Node.js**: Acesse [nodejs.org](https://nodejs.org) e baixe a versão recomendada (LTS). Instale clicando em "Avançar" até concluir.
+2. **Cloudflared**: Aperte a tecla `Windows` do seu teclado, digite `PowerShell`, abra-o e cole este comando e aperte Enter: `winget install Cloudflare.cloudflared`
 
-```cmd
-cd jacy-bot
-copy .env.example .env
-```
+### Passo 2: Executar o Bot
+1. Acesse a pasta onde estão os arquivos deste bot.
+2. Dê um **duplo clique no arquivo `iniciar.bat`**.
+3. O script vai instalar as dependências automaticamente e abrirá o navegador em uma **Interface de Configuração** (`http://localhost:3000/config`).
 
-Abra o `.env` e preencha:
+### Passo 3: Preencher o Painel de Configuração
+Na tela que se abrir no seu navegador, você precisará preencher os seguintes campos:
 
-| Variável | Como obter |
+| Campo | O que é e onde conseguir? |
 |---|---|
-| `GEMINI_API_KEY` | https://aistudio.google.com/app/apikey |
-| `DATABASE_URL` | https://neon.tech → Connection string |
-| `SPREADSHEET_ID` | ID na URL da planilha (entre `/d/` e `/edit`) |
-| `GOOGLE_CREDENTIALS_JSON` | JSON da Service Account em uma linha (veja abaixo) |
+| **API Key da IA** | A "chave" para a inteligência artificial funcionar. Crie uma conta no [Groq Console](https://console.groq.com/keys) ou no [Google AI Studio](https://aistudio.google.com/app/apikey) e crie uma API Key. Custa R$ 0,00. |
+| **DATABASE_URL** | Link do seu banco de dados PostgreSQL. Recomendamos o site [Neon.tech](https://neon.tech) (gratuito). Após criar um projeto lá, copie a "Connection String". |
+| **SPREADSHEET_ID** | Abra sua planilha do Google Sheets. O ID é o código gigante que fica na barra de endereços, entre `/d/` e `/edit`. |
+| **GOOGLE CREDENTIALS** | Crie um Projeto no Google Cloud, gere uma "Conta de Serviço" (Service Account) e crie uma chave JSON. Cole todo o conteúdo do arquivo JSON aqui. |
 
-**Converter JSON da Service Account para uma linha:**
-```cmd
-node -e "const f=require('./credenciais.json');console.log(JSON.stringify(f))"
-```
-Cole o resultado em `GOOGLE_CREDENTIALS_JSON=`
+**Muito Importante:** Para o bot ler sua planilha do Google, vá na sua planilha -> Clique em "Compartilhar" -> e adicione o e-mail que está dentro do seu arquivo JSON do Google Cloud.
 
-**Compartilhar a planilha com o bot:**
-Abra a planilha → Compartilhar → cole o e-mail da service account (`...@projeto.iam.gserviceaccount.com`)
+Após preencher, clique em **Salvar e Reiniciar Bot**. A página se encerrará. Feche a janela preta do terminal do bot e abra o `iniciar.bat` novamente.
 
-### 3. Iniciar
+### Passo 4: Conectar ao WhatsApp
+Ao rodar o `iniciar.bat` pela segunda vez:
+1. Uma janela preta (terminal) mostrará um **QR Code**.
+2. Abra o WhatsApp no seu celular » Três pontinhos » Dispositivos conectados » Conectar dispositivo.
+3. Escaneie a tela do seu computador.
+4. O bot enviará no terminal a lista de Grupos que você participa com seus respectivos IDs. Copie o ID do grupo desejado, volte na interface `http://localhost:3000/config` e cole no campo **GROUP_ID**. Salve novamente.
 
-Dê duplo clique em **`iniciar.bat`**
-
-Na primeira vez:
-1. Um QR Code vai aparecer no terminal
-2. Abra o WhatsApp no celular → Dispositivos conectados → Conectar dispositivo
-3. Escaneie o QR
-4. O bot vai listar os grupos disponíveis com seus IDs
-5. Copie o ID do grupo desejado e cole em `GROUP_ID=` no `.env`
-6. Feche e abra o `iniciar.bat` novamente
+Pronto! Agora o bot só responderá dentro daquele grupo específico.
 
 ---
 
-## 📁 PDFs para leitura
+## 💬 Como usar o Chatbot no WhatsApp?
 
-Coloque arquivos PDF na pasta `pdfs/` e peça ao bot para ler:
+Basta enviar mensagens naturais no grupo. O bot entende o contexto e decide qual ferramenta usar.
 
-> *"Leia o arquivo ata_reuniao.pdf e faça um resumo"*
-
----
-
-## 💬 Exemplos de uso no grupo
-
-| Mensagem | O que o bot faz |
-|---|---|
-| `Quem está inadimplente?` | Consulta o PostgreSQL |
-| `Mostra a aba Moradores` | Lê o Google Sheets |
-| `Gera relatório de pagamentos de maio` | Cria PDF + envia link |
-| `Leia o arquivo ata_abril.pdf` | Extrai e resume o PDF |
-| `Quantos moradores temos cadastrados?` | Consulta o banco |
+**Exemplos de uso:**
+* *"Quantos apoiadores temos cadastrados na nossa planilha do Google?"*
+* *"Consulte o banco de dados e me diga quais demandas estão com status 'pendente'."*
+* *"Leia o arquivo ata_reuniao.pdf que está na pasta e faça um resumo dos tópicos."*
+* *"Gere um relatório em PDF com as contas de maio."* -> (Ele enviará um link seguro usando o Cloudflare Tunnel para você baixar o PDF na hora).
 
 ---
 
-## 🔁 Uso diário
+## 📂 Como colocar PDFs para o bot ler?
+Vá até a pasta onde este bot está instalado e procure a pasta `pdfs/`. Arraste os documentos para lá. No WhatsApp, basta dizer: *"Leia o arquivo [nome do arquivo].pdf..."*.
 
-Basta dar duplo clique no `iniciar.bat`. A sessão do WhatsApp fica salva na pasta `auth_session/` — não precisa escanear o QR toda vez.
-
-> ⚠️ Se deslogar (trocar de celular, etc), delete a pasta `auth_session/` e escaneie novamente.
-
----
-
-## 💰 Custo mensal
-
-| Serviço | Plano | Custo |
-|---|---|---|
-| Gemini Flash | Free (1500 req/dia) | R$ 0 |
-| Neon PostgreSQL | Free (0.5 GB) | R$ 0 |
-| Google Sheets | Free | R$ 0 |
-| Cloudflare Tunnel | Free | R$ 0 |
-| **Total** | | **R$ 0** |
+## 💡 Custos da Operação
+Esta arquitetura foi feita para ter **custo zero** ou muito próximo a zero:
+* **Hospedagem:** Seu próprio computador Windows.
+* **Inteligência Artificial:** Groq Llama 3 (Plano Grátis) ou Gemini 1.5 Flash (Plano Grátis).
+* **Banco de Dados:** Neon.tech (Plano Grátis de 500MB).
+* **WhatsApp API:** Direto via biblioteca local (Baileys), sem custo de disparos da Meta.

@@ -1,32 +1,29 @@
 @echo off
 echo =========================================
-echo   Bot WhatsApp - Jacy Afonso (PT/DF)
+echo   Bot WhatsApp - Administrativo Jacy
 echo =========================================
 echo.
 
-REM Verifica se o .env existe
-if not exist .env (
-    echo [ERRO] Arquivo .env nao encontrado!
-    echo Copie o .env.example para .env e preencha as variaveis.
-    pause
-    exit /b 1
-)
-
-REM Verifica se node_modules existe
+REM Verifica se node_modules existe, senão instala
 if not exist node_modules (
-    echo [INFO] Instalando dependencias pela primeira vez...
+    echo [INFO] Instalando dependencias (isso so acontece na primeira vez)...
     call npm install
     echo.
 )
 
-echo [INFO] Abrindo tunel Cloudflare em nova janela...
-echo [DICA] Copie a URL gerada e coloque em BASE_URL no .env
-echo.
+REM Abre a janela do tunel do Cloudflare
+echo [INFO] Abrindo tunel Cloudflare para PDFs...
 start "Cloudflare Tunnel" cmd /k "cloudflared tunnel --url http://localhost:3000"
 
 timeout /t 2 /nobreak >nul
 
-echo [INFO] Iniciando o bot...
+REM Inicia o bot, mas abre a página de configuração no navegador caso falte a chave
+start http://localhost:3000/config
+
+echo [INFO] O Painel de Configuracao foi aberto no seu navegador!
+echo [INFO] Se o bot ainda nao estiver configurado, preencha os dados e clique em Salvar.
+echo.
+echo [INFO] Iniciando o bot no terminal...
 echo.
 node bot.js
 
