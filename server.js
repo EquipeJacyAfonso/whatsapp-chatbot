@@ -1,6 +1,6 @@
 /**
  * Servidor HTTP: Painel Administrativo de Configuração Visual (.env)
- * COM SUPORTE A WEBSOCKETS (Socket.IO) PARA QR CODE EM TEMPO REAL
+ * COM SUPORTE A WEBSOCKETS (Sincronização 100% em Tempo Real)
  */
 
 const http = require("http");
@@ -8,14 +8,16 @@ const fs = require("fs");
 const path = require("path");
 const querystring = require("querystring");
 const { exec } = require("child_process");
-const { Server } = require("socket.io"); // <-- NOVO
+const { Server } = require("socket.io");
 
-const REPORTS_DIR = path.join(__dirname, process.env.REPORTS_DIR || "reports");
-const ENV_PATH = path.join(__dirname, ".env");
-const GROUPS_PATH = path.join(__dirname, "grupos.json");
+// Caminhos baseados no diretório de execução (Prepara o terreno para o .exe)
+const ROOT_DIR = process.cwd();
+const REPORTS_DIR = path.join(ROOT_DIR, process.env.REPORTS_DIR || "reports");
+const ENV_PATH = path.join(ROOT_DIR, ".env");
+const GROUPS_PATH = path.join(ROOT_DIR, "grupos.json");
 
 let currentPort = parseInt(process.env.PORT || 3000, 10);
-let io; // Variável global para o Socket.IO
+let io; 
 
 if (!fs.existsSync(ENV_PATH)) {
   fs.writeFileSync(ENV_PATH, "");
@@ -53,19 +55,11 @@ function startServer() {
     if (req.url === "/config" && req.method === "GET") {
       const env = getEnvVariables();
       
-      let groupsHtml = ``;
+      // Tenta ler grupos salvos para o carregamento inicial (se já estiver conectado)
+      let initialGroups = [];
       if (fs.existsSync(GROUPS_PATH)) {
         try {
-          const groups = JSON.parse(fs.readFileSync(GROUPS_PATH, "utf8"));
-          if (groups.length > 0) {
-            groupsHtml = `
-              <select name="GROUP_ID" required style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px;">
-                <option value="">-- Selecione o Grupo Alvo do Bot --</option>
-                ${groups.map(g => `<option value="${g.id}" ${env.GROUP_ID === g.id ? 'selected' : ''}>${g.name} (${g.id.split('@')[0]})</option>`).join('')}
-              </select>
-              <div class="hint">O bot ignorará mensagens de fora deste grupo selecionado.</div>
-            `;
-          }
+          initialGroups = JSON.parse(fs.readFileSync(GROUPS_PATH, "utf8"));
         } catch (e) {
           console.error("Erro ao ler grupos.json", e);
         }
@@ -91,11 +85,11 @@ function startServer() {
             button:hover { background: #0369a1; }
             .hint { font-size: 12px; color: #64748b; margin-top: 5px; }
             .file-box { background: #f1f5f9; padding: 15px; border: 2px dashed #cbd5e1; border-radius: 6px; margin-top: 6px; text-align: center; }
-            .provider-select { background: #e2e8f0; font-weight: bold; }
             
-            /* Status Box Dynamics */
+            /* UI do WebSocket */
             #status-box { background: #fff3cd; padding: 15px; border-radius: 8px; border: 1px solid #ffe69c; color: #664d03; margin-top: 15px; text-align: center; transition: all 0.3s; }
-            #qr-image { margin-top: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: none; margin-left: auto; margin-right: auto; }
+            #qr-image { margin-top: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: none; margin-left: auto; margin-right: auto; max-width: 250px; }
+            #group-container { margin-top: 5px; }
           </style>
           
           <script src="/socket.io/socket.io.js"></script>
@@ -105,7 +99,7 @@ function startServer() {
             <h1>⚙️ Painel de Configuração — Jacy Bot</h1>
             
             <div id="status-box">
-              <span id="status-text">⏳ <b>Aguardando comunicação com o núcleo do WhatsApp...</b></span>
+              <span id="status-text">⏳ <b>Conectando ao núcleo do WhatsApp...</b></span>
               <img id="qr-image" src="" alt="QR Code WhatsApp">
             </div>
 
@@ -113,18 +107,21 @@ function startServer() {
               
               <h3>1. Vinculação de Canal</h3>
               <label>Grupo do WhatsApp Monitorado</label>
-              ${groupsHtml || '<div class="hint" style="color:#ef4444;">Nenhum grupo sincronizado ainda. Conecte o WhatsApp primeiro.</div>'}
+              
+              <div id="group-container">
+                <div class="hint" style="color:#ef4444;">⏳ Aguardando sincronização de grupos... Conecte o WhatsApp.</div>
+              </div>
 
               <h3>2. Provedor de Inteligência Artificial</h3>
               <label>Escolha o Provedor Ativo</label>
-              <select name="AI_PROVIDER" class="provider-select">
-                <option value="groq" ${env.AI_PROVIDER === 'groq' ? 'selected' : ''}>Groq / Llama 3 (Custo: Gratuito)</option>
-                <option value="gemini" ${env.AI_PROVIDER === 'gemini' ? 'selected' : ''}>Gemini Flash (Custo: Gratuito)</option>
-                <option value="anthropic" ${env.AI_PROVIDER === 'anthropic' ? 'selected' : ''}>Claude 3.5 Haiku (Ultra Baixo)</option>
+              <select name="AI_PROVIDER">
+                <option value="groq" ${env.AI_PROVIDER === 'groq' ? 'selected' : ''}>Groq / Llama 3 (Gratuito)</option>
+                <option value="gemini" ${env.AI_PROVIDER === 'gemini' ? 'selected' : ''}>Gemini Flash (Gratuito)</option>
+                <option value="anthropic" ${env.AI_PROVIDER === 'anthropic' ? 'selected' : ''}>Claude 3.5 Haiku (Baixo Custo)</option>
               </select>
 
               <label>Chave de API (API Key)</label>
-              <input type="password" name="AI_API_KEY" value="${env.AI_API_KEY || ''}" placeholder="Cole sua chave aqui (gsk_..., AIza..., ou sk-ant-...)">
+              <input type="password" name="AI_API_KEY" value="${env.AI_API_KEY || ''}" placeholder="Cole sua chave de IA">
               
               <h3>3. Armazenamento e Bancos de Dados</h3>
               <label>String de Conexão PostgreSQL (DATABASE_URL)</label>
@@ -133,7 +130,7 @@ function startServer() {
               <label>📊 ID da Planilha Google (Sheets)</label>
               <input type="text" name="SPREADSHEET_ID" value="${env.SPREADSHEET_ID || ''}" placeholder="Ex: 1BxiMVs0XRA5nFMdKvXdBAnbn...">
 
-              <label>📁 ID da Pasta do Google Drive (GOOGLE_DRIVE_FOLDER_ID)</label>
+              <label>📁 ID da Pasta do Google Drive</label>
               <input type="text" name="GOOGLE_DRIVE_FOLDER_ID" value="${env.GOOGLE_DRIVE_FOLDER_ID || ''}" placeholder="Ex: 1aBcDeFgHiJkLmNoPqRsTuVwXyZ...">
               
               <h3>4. Integração Google Cloud</h3>
@@ -141,14 +138,39 @@ function startServer() {
                 <span style="font-size: 13px; color: #475569; display: block; margin-bottom: 8px;">Arraste ou selecione o arquivo JSON original do Google:</span>
                 <input type="file" id="upload_json" accept=".json">
               </div>
-              <textarea id="output_json" name="GOOGLE_CREDENTIALS_JSON" rows="3" style="margin-top: 12px; font-family: monospace; font-size: 11px;" placeholder="O arquivo enviado acima será convertido aqui..." required>${env.GOOGLE_CREDENTIALS_JSON || ''}</textarea>
+              <textarea id="output_json" name="GOOGLE_CREDENTIALS_JSON" rows="3" style="margin-top: 12px; font-family: monospace; font-size: 11px;" placeholder="O arquivo JSON será convertido aqui...">${env.GOOGLE_CREDENTIALS_JSON || ''}</textarea>
 
               <button type="submit">💾 Salvar Configurações e Aplicar</button>
             </form>
           </div>
 
           <script>
-            // Lógica do arquivo JSON
+            const savedGroupId = "${env.GROUP_ID || ''}";
+            const initialGroups = ${JSON.stringify(initialGroups)};
+            
+            // Função para injetar os grupos no HTML sem recarregar a página
+            function renderGroups(groups) {
+              const container = document.getElementById('group-container');
+              if (!groups || groups.length === 0) {
+                container.innerHTML = '<div class="hint" style="color:#ef4444;">Nenhum grupo encontrado na sua conta.</div>';
+                return;
+              }
+              
+              let html = '<select name="GROUP_ID" required style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px;">';
+              html += '<option value="">-- Selecione o Grupo Alvo do Bot --</option>';
+              groups.forEach(g => {
+                const isSelected = (g.id === savedGroupId) ? 'selected' : '';
+                html += \`<option value="\${g.id}" \${isSelected}>\${g.name}</option>\`;
+              });
+              html += '</select><div class="hint">O bot ignorará mensagens de fora deste grupo selecionado.</div>';
+              
+              container.innerHTML = html;
+            }
+
+            // Renderiza os grupos se já existirem no json local
+            if(initialGroups.length > 0) renderGroups(initialGroups);
+
+            // Parser de JSON
             document.getElementById('upload_json').addEventListener('change', function(e) {
               const file = e.target.files[0];
               if (!file) return;
@@ -158,14 +180,14 @@ function startServer() {
                   const obj = JSON.parse(evt.target.result);
                   document.getElementById('output_json').value = JSON.stringify(obj);
                 } catch (err) {
-                  alert('O arquivo selecionado não é um JSON válido do Google Cloud.');
+                  alert('JSON inválido.');
                   e.target.value = '';
                 }
               };
               reader.readAsText(file);
             });
 
-            // Comunicação Real-time (WebSocket)
+            // WebSocket Client Logic
             const socket = io();
             const statusBox = document.getElementById('status-box');
             const statusText = document.getElementById('status-text');
@@ -184,14 +206,16 @@ function startServer() {
               statusBox.style.background = '#dcfce7';
               statusBox.style.borderColor = '#bbf7d0';
               statusBox.style.color = '#14532d';
-              statusText.innerHTML = '✅ <b>WhatsApp conectado com sucesso!</b> (Atualizando grupos...)';
+              statusText.innerHTML = '✅ <b>WhatsApp conectado! Sincronizando dados...</b>';
               qrImage.style.display = 'none';
-              
-              // Recarrega a página automaticamente após 3 segundos para popular o select de grupos
-              setTimeout(() => {
-                window.location.reload();
-              }, 3000);
             });
+
+            // O pulo do gato: recebe a lista e injeta no DOM instantaneamente!
+            socket.on('groups_ready', (groupsList) => {
+              renderGroups(groupsList);
+              statusText.innerHTML = '✅ <b>WhatsApp conectado e grupos sincronizados!</b>';
+            });
+
           </script>
         </body>
         </html>
@@ -199,7 +223,6 @@ function startServer() {
       return;
     }
 
-    // Gravação das configurações (POST)
     if (req.url === "/config" && req.method === "POST") {
       let body = "";
       req.on("data", chunk => { body += chunk.toString(); });
@@ -214,7 +237,7 @@ function startServer() {
           <div style="font-family: sans-serif; text-align: center; margin-top: 60px; color: #1e293b;">
             <h2 style="color: #10b981;">✅ Configurações Salvas com Sucesso!</h2>
             <p>O bot será reiniciado com as novas configurações.</p>
-            <p style="font-weight: bold; color: #475569;">Pode fechar esta janela ou aguardar a reconexão automática do painel.</p>
+            <p style="font-weight: bold; color: #475569;">Pode fechar esta janela ou aguardar a reconexão...</p>
           </div>
           <script>setTimeout(() => window.location.href="/config", 4000);</script>
         `);
@@ -223,38 +246,14 @@ function startServer() {
       return;
     }
 
-    // Download de PDFs gerados
-    if (req.url.startsWith("/reports/")) {
-      const filename = path.basename(req.url.replace("/reports/", ""));
-      const filepath = path.join(REPORTS_DIR, filename);
-
-      if (!fs.existsSync(filepath) || !filename.endsWith(".pdf")) {
-        res.writeHead(404);
-        res.end("Relatório não encontrado");
-        return;
-      }
-
-      res.writeHead(200, {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-      });
-      fs.createReadStream(filepath).pipe(res);
-      return;
-    }
-
     res.writeHead(302, { Location: "/config" });
     res.end();
   });
 
-  // Inicializa o Socket.IO acoplado ao Servidor HTTP
   io = new Server(server);
-  io.on("connection", (socket) => {
-    // console.log("Interface Web conectada ao Socket.");
-  });
 
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
-      console.log(`⚠️  Porta ${currentPort} ocupada. Tentando automaticamente a porta ${currentPort + 1}...`);
       currentPort++;
       server.listen(currentPort);
     } else {
@@ -263,16 +262,10 @@ function startServer() {
   });
 
   server.listen(currentPort, () => {
-    console.log(`\n=============================================================`);
-    console.log(`🛠️  PAINEL ADMIN ATIVO: http://localhost:${currentPort}/config`);
-    console.log(`=============================================================`);
-    
-    // Abre no navegador silenciosamente
-    exec(`start http://localhost:${currentPort}/config`);
+    console.log(`\n[PAINEL ADMIN] UI iniciada com WebSockets! URL: http://localhost:${currentPort}/config`);
   });
 }
 
-// Função para permitir que o bot.js pegue a instância do Socket.IO e envie eventos
 function getIo() {
   return io;
 }

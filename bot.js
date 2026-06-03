@@ -1,6 +1,6 @@
 /**
  * Bot WhatsApp - Administração Jacy Afonso (PT/DF)
- * Arquitetura Autônoma Plug-and-Play via Baileys com UI Dinâmica
+ * Arquitetura Autônoma Plug-and-Play com Sincronização Real-Time
  */
 
 require("dotenv").config();
@@ -11,20 +11,22 @@ const {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
 } = require("@whiskeysockets/baileys");
-const qrcode = require("qrcode"); // <-- MUDOU: Agora usamos o gerador de imagem Base64
+const qrcode = require("qrcode");
 const pino = require("pino");
 const path = require("path");
 const fs = require("fs");
 
 const { processMessage } = require("./services/ai");
-const { startServer, getIo } = require("./server"); // <-- MUDOU: Importa getIo para falar com a Web
+const { startServer, getIo } = require("./server");
 
-const logger = pino({ level: "silent" });
-const AUTH_DIR = path.join(__dirname, "auth_session");
+// Caminhos baseados no diretório de execução para compatibilidade com .exe
+const ROOT_DIR = process.cwd();
+const AUTH_DIR = path.join(ROOT_DIR, "auth_session");
 const GROUP_ID = process.env.GROUP_ID || "";
+const logger = pino({ level: "silent" });
 
 async function startBot() {
-  // Inicializa o servidor dinâmico de configurações, relatórios e WebSockets
+  // Inicializa o servidor dinâmico de UI + WebSockets
   startServer();
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -38,7 +40,7 @@ async function startBot() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    printQRInTerminal: false, // Desligamos o print no terminal
+    printQRInTerminal: false,
     logger,
     browser: ["Jacy Bot Admin", "Chrome", "1.0.0"],
     syncFullHistory: false,
@@ -48,15 +50,13 @@ async function startBot() {
 
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    const io = getIo(); // Puxa a conexão com o navegador web
+    const io = getIo(); // Conexão com o frontend web
 
     if (qr) {
-      console.log("\n[SISTEMA] Novo QR Code gerado! Abra o Painel Web (Navegador) para escanear.\n");
+      console.log("\n[SISTEMA] Novo QR Code gerado! Abra o painel no navegador.");
       try {
-        // Converte o texto do QR Code em uma imagem Base64
         const qrImageBase64 = await qrcode.toDataURL(qr);
-        // Emite a imagem para o navegador exibir instantaneamente
-        if (io) io.emit("qr", qrImageBase64);
+        if (io) io.emit("qr", qrImageBase64); // Manda o QR Code pro navegador
       } catch (err) {
         console.error("Erro ao gerar QR Code para a UI:", err.message);
       }
@@ -64,25 +64,28 @@ async function startBot() {
 
     if (connection === "open") {
       console.log("✅ Conexão estabelecida com o WhatsApp com sucesso!");
-      // Emite sinal verde para o painel web mudar o texto
-      if (io) io.emit("connected");
+      if (io) io.emit("connected"); // Manda sinal verde pro navegador
 
-      // Coleta grupos vigentes e salva para alimentação do Painel Web
+      // Coleta grupos e injeta DIRETO NA TELA DO USUÁRIO via WebSocket
       try {
         const groups = await sock.groupFetchAllParticipating();
         const groupList = Object.values(groups).map((g) => ({
           id: g.id,
           name: g.subject,
         }));
-        fs.writeFileSync(path.join(__dirname, "grupos.json"), JSON.stringify(groupList, null, 2));
+        
+        // Salva backup local e envia para a interface gráfica
+        fs.writeFileSync(path.join(ROOT_DIR, "grupos.json"), JSON.stringify(groupList, null, 2));
         console.log("📊 Sincronização de grupos concluída!");
+        
+        if (io) io.emit("groups_ready", groupList); // <-- O PULO DO GATO AQUI
+
       } catch (err) {
         console.error("Falha ao mapear grupos:", err.message);
       }
 
       if (!GROUP_ID) {
         console.log("\n[ATENÇÃO] Nenhum grupo foi selecionado ainda.");
-        console.log("👉 Acesse a interface web, escolha o grupo alvo e clique em Salvar.\n");
       } else {
         console.log(`📡 Monitorando mensagens ativas no grupo ID: ${GROUP_ID}\n`);
       }
@@ -129,7 +132,6 @@ async function startBot() {
         await sock.sendMessage(from, { text: resposta });
         await sock.sendPresenceUpdate("paused", from);
 
-        console.log(`✉️ Resposta enviada ao grupo.`);
       } catch (err) {
         console.error("Erro no processamento da mensagem:", err.message);
       }
