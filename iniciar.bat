@@ -4,9 +4,9 @@ echo   Bot WhatsApp - Administrativo Jacy
 echo =========================================
 echo.
 
-REM Verifica se node_modules existe, senão instala
+REM Verifica se node_modules existe, senao instala
 if not exist node_modules (
-    echo [INFO] Instalando dependencias (isso so acontece na primeira vez)...
+    echo [INFO] Instalando dependencias - isso so acontece na primeira vez...
     call npm install
     echo.
 )
@@ -17,7 +17,7 @@ start "Cloudflare Tunnel" cmd /k "cloudflared tunnel --url http://localhost:3000
 
 timeout /t 2 /nobreak >nul
 
-REM Inicia o bot, mas abre a página de configuração no navegador caso falte a chave
+REM Inicia o bot e abre a pagina de configuracao no navegador
 start http://localhost:3000/config
 
 echo [INFO] O Painel de Configuracao foi aberto no seu navegador!
