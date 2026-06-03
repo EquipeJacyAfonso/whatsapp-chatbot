@@ -6,11 +6,14 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const querystring = require("querystring");
+const { exec } = require("child_process"); // Adicionado para abrir as janelas
 
 const REPORTS_DIR = path.join(__dirname, process.env.REPORTS_DIR || "reports");
 const ENV_PATH = path.join(__dirname, ".env");
 const GROUPS_PATH = path.join(__dirname, "grupos.json");
-const PORT = process.env.PORT || 3000;
+
+// Define a porta inicial
+let currentPort = parseInt(process.env.PORT || 3000, 10);
 
 if (!fs.existsSync(ENV_PATH)) {
   fs.writeFileSync(ENV_PATH, "");
@@ -39,10 +42,10 @@ function saveEnvVariables(newEnv) {
 function startServer() {
   const server = http.createServer((req, res) => {
     
+    // Rota da Interface de Configuração (GET)
     if (req.url === "/config" && req.method === "GET") {
       const env = getEnvVariables();
       
-      // Lógica para montar a lista de grupos
       let groupsHtml = `
         <div style="background: #fff3cd; padding: 10px; border-radius: 4px; border: 1px solid #ffe69c; color: #664d03; margin-top: 5px;">
           ⚠️ <b>Nenhum grupo encontrado.</b><br>
@@ -116,6 +119,7 @@ function startServer() {
       return;
     }
 
+    // Rota para salvar configurações (POST)
     if (req.url === "/config" && req.method === "POST") {
       let body = "";
       req.on("data", chunk => { body += chunk.toString(); });
@@ -137,6 +141,7 @@ function startServer() {
       return;
     }
 
+    // Rota dos relatórios
     if (req.url.startsWith("/reports/")) {
       const filename = path.basename(req.url.replace("/reports/", ""));
       const filepath = path.join(REPORTS_DIR, filename);
@@ -159,8 +164,26 @@ function startServer() {
     res.end();
   });
 
-  server.listen(PORT, () => {
-    console.log(`\n🛠️  Painel de Configuração: http://localhost:${PORT}/config`);
+  // SE A PORTA ESTIVER OCUPADA, PULA PARA A PRÓXIMA
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.log(`⚠️  Porta ${currentPort} ocupada. Tentando a porta ${currentPort + 1}...`);
+      currentPort++;
+      server.listen(currentPort);
+    } else {
+      console.error("❌ Erro no servidor HTTP:", err.message);
+    }
+  });
+
+  // QUANDO A PORTA FUNCIONAR, ELE ABRE OS PROGRAMAS
+  server.listen(currentPort, () => {
+    console.log(`\n🛠️  Painel de Configuração aberto em: http://localhost:${currentPort}/config`);
+    
+    // Abre o Cloudflare Tunnel na porta certa automaticamente
+    exec(`start "Cloudflare Tunnel" cmd /c "cloudflared tunnel --url http://localhost:${currentPort}"`);
+    
+    // Abre o navegador automaticamente
+    exec(`start http://localhost:${currentPort}/config`);
   });
 }
 

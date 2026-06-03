@@ -11,19 +11,8 @@ if not exist node_modules (
     echo.
 )
 
-REM Abre a janela do tunel do Cloudflare
-echo [INFO] Abrindo tunel Cloudflare para PDFs...
-start "Cloudflare Tunnel" cmd /k "cloudflared tunnel --url http://localhost:3000"
-
-timeout /t 2 /nobreak >nul
-
-REM Inicia o bot e abre a pagina de configuracao no navegador
-start http://localhost:3000/config
-
-echo [INFO] O Painel de Configuracao foi aberto no seu navegador!
-echo [INFO] Se o bot ainda nao estiver configurado, preencha os dados e clique em Salvar.
-echo.
 echo [INFO] Iniciando o bot no terminal...
+echo [INFO] O Painel e o Tunel serao abertos automaticamente.
 echo.
 node bot.js
 
