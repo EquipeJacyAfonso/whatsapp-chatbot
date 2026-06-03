@@ -1,18 +1,18 @@
 @echo off
-echo =========================================
-echo   Bot WhatsApp - Administrativo Jacy
-echo =========================================
+title Jacy Bot - Nucleo Administrativo
+echo =======================================================
+echo         SISTEMA DE INICIALIZACAO AUTONOMA
+echo =======================================================
 echo.
 
-REM Verifica se node_modules existe, senao instala
 if not exist node_modules (
-    echo [INFO] Instalando dependencias - isso so acontece na primeira vez...
+    echo [SISTEMA] Instalando pacotes de dependencias essenciais...
     call npm install
     echo.
 )
 
-echo [INFO] Iniciando o bot no terminal...
-echo [INFO] O Painel e o Tunel serao abertos automaticamente.
+echo [SISTEMA] Executando rotinas do bot.js...
+echo [SISTEMA] O painel de configuracao abrira em seu navegador padrao.
 echo.
 node bot.js
 
