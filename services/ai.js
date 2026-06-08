@@ -99,8 +99,7 @@ const tools = [
         required: ["nome_arquivo"]
       }
     }
-  }
-
+  },
   {
     type: "function",
     function: {
