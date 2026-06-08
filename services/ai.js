@@ -100,6 +100,20 @@ const tools = [
       }
     }
   }
+
+  {
+    type: "function",
+    function: {
+      name: "consultar_agenda_google",
+      description: "Consulta a agenda do Google Calendar para ver os próximos eventos, compromissos e reuniões do candidato.",
+      parameters: {
+        type: "object",
+        properties: {
+          quantidade: { type: "integer", description: "Número de próximos eventos a procurar (padrão 10)" }
+        }
+      }
+    }
+  },
 ];
 
 const historicos = {};
@@ -134,6 +148,12 @@ async function executarFuncao(nome, args) {
       let resultado = colunas.join(" | ") + "\n" + "-".repeat(40) + "\n" + linhas.join("\n");
       if (rows.length > 100) resultado += `\n\n[Exibindo 100 de ${rows.length} registros. Se precisar de mais, refine o SQL].`;
       return resultado;
+    }
+
+    if (nome === "consultar_agenda_google") {
+      const { getUpcomingEvents } = require("./calendar");
+      const qtd = args.quantidade || 10;
+      return await getUpcomingEvents(qtd);
     }
 
     if (nome === "listar_abas_planilha") {
