@@ -156,7 +156,7 @@ async function executarFuncao(nome, args) {
         return dados[0][0];
       }
 
-      const limit = 150; // Limite generoso de leitura para a IA analisar de uma vez
+      const limit = 15; // Limite generoso de leitura para a IA analisar de uma vez
       const amostra = dados.slice(0, limit).map((row) => row.join(" | ")).join("\n");
       let resultado = amostra;
       
