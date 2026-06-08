@@ -113,6 +113,20 @@ const tools = [
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "pesquisar_na_web",
+      description: "Pesquisa no Google em tempo real. Use para verificar notícias recentes, fact-checking, ou buscar informações que não estão no banco de dados.",
+      parameters: {
+        type: "object",
+        properties: {
+          termo_pesquisa: { type: "string", description: "O termo exato a ser pesquisado no Google" }
+        },
+        required: ["termo_pesquisa"]
+      }
+    }
+  },
 ];
 
 const historicos = {};
@@ -158,6 +172,12 @@ async function executarFuncao(nome, args) {
     if (nome === "listar_abas_planilha") {
       const abas = await listSheets();
       return `Abas disponíveis nesta planilha do Google Sheets: [${abas.join(", ")}]. Use a ferramenta 'ler_planilha' com um destes nomes para ver os dados.`;
+    }
+
+    if (nome === "pesquisar_na_web") {
+      const { pesquisarWeb } = require("./web");
+      const query = args.termo_pesquisa || "";
+      return await pesquisarWeb(query);
     }
 
     if (nome === "ler_planilha") {
