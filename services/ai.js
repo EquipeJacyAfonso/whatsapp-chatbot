@@ -1,5 +1,5 @@
 /**
- * Serviço de IA Multi-Provedor (Groq, Gemini, Anthropic) com Function Calling e suporte a Google Drive
+ * Serviço de IA Multi-Provedor (Groq, Gemini, Anthropic) com Roteamento Avançado e Ferramentas
  */
 
 require("dotenv").config();
@@ -14,24 +14,17 @@ const SYSTEM_PROMPT = `Você é o assistente virtual administrativo da campanha 
 Você tem acesso ao banco de dados da campanha (PostgreSQL), planilhas do Google Sheets e a uma pasta compartilhada no Google Drive contendo documentos PDF.
 
 O banco de dados possui as seguintes tabelas:
-- apoiadores: cadastro completo (nome_completo, primeiro_nome, profissao, area_atuacao, orgao_empresa, whatsapp, email, cidade, uf, cidade_votacao, presente_lancamento, apoiador, origem)
-- demandas: pedidos recebidos (descricao, categoria, status: 'aberta'/'em_andamento'/'resolvida', nome_solicitante)
+- apoiadores: cadastro completo (nome_completo, profissao, area_atuacao, orgao_empresa, whatsapp, cidade, apoiador, origem)
+- demandas: pedidos recebidos (descricao, categoria, status, nome_solicitante)
 - eventos: agenda (titulo, data_evento, horario, local, tipo, status)
-- presencas: presença em eventos
-
-Views prontas no Banco:
-- apoiadores_por_cidade
-- apoiadores_por_area
-- demandas_abertas
-- resumo_campanha
 
 Diretrizes importantes:
-1. Sempre use as ferramentas para buscar dados reais (banco, planilhas ou arquivos no Drive) antes de responder. Nunca invente dados ou estatísticas.
-2. Se o usuário pedir para ver o que tem no Drive, use 'listar_google_drive'.
-3. Se o usuário pedir para ler/resumir um documento do Drive, use 'ler_pdf_google_drive'.
-4. Responda sempre em português, de forma clara, profissional e extremamente objetiva.`;
+1. Sempre use as ferramentas para buscar dados reais (banco, planilhas ou arquivos) antes de responder.
+2. Para ler planilhas, SEMPRE use a ferramenta 'listar_abas_planilha' primeiro para descobrir os nomes exatos das abas. Só depois use 'ler_planilha' passando o nome correto.
+3. Se o usuário pedir para ver o que tem no Drive, use 'listar_google_drive'.
+4. Responda sempre em português, de forma clara, profissional e sem inventar dados.`;
 
-// Definição das ferramentas suportadas pelo sistema (Formato Padrão)
+// Definição das ferramentas
 const tools = [
   {
     type: "function",
@@ -50,13 +43,21 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "listar_abas_planilha",
+      description: "Lista todas as abas disponíveis na planilha do Google Sheets. Use sempre antes de ler a planilha.",
+      parameters: { type: "object", properties: {} }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "ler_planilha",
-      description: "Lê dados do Google Sheets. Use 'listar' no parâmetro aba para ver as abas disponíveis.",
+      description: "Lê o conteúdo de uma aba específica do Google Sheets. Você DEVE usar o nome exato da aba retornado por listar_abas_planilha.",
       parameters: {
         type: "object",
         properties: {
-          aba: { type: "string", description: "Nome exato da aba da planilha ou 'listar'" },
-          filtro: { type: "string", description: "Texto opcional para filtrar linhas" }
+          aba: { type: "string", description: "Nome exato da aba (ex: 'Página1')" },
+          filtro: { type: "string", description: "Texto opcional para buscar informações específicas na planilha (ex: um nome ou cidade)" }
         },
         required: ["aba"]
       }
@@ -70,8 +71,8 @@ const tools = [
       parameters: {
         type: "object",
         properties: {
-          titulo: { type: "string", description: "Título que aparecerá no topo do relatório" },
-          conteudo: { type: "string", description: "Conteúdo textual detalhado estruturado para o relatório" }
+          titulo: { type: "string", description: "Título do relatório" },
+          conteudo: { type: "string", description: "Conteúdo textual para o relatório" }
         },
         required: ["titulo", "conteudo"]
       }
@@ -80,37 +81,20 @@ const tools = [
   {
     type: "function",
     function: {
-      name: "ler_pdf_local",
-      description: "Lê o texto de um PDF armazenado na pasta local pdfs/. Use 'listar' para ver os disponíveis.",
-      parameters: {
-        type: "object",
-        properties: {
-          nome_arquivo: { type: "string", description: "Nome do arquivo local ou 'listar'" }
-        },
-        required: ["nome_arquivo"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
       name: "listar_google_drive",
-      description: "Lista todos os arquivos PDF disponíveis na pasta configurada do Google Drive.",
-      parameters: {
-        type: "object",
-        properties: {}
-      }
+      description: "Lista todos os arquivos PDF disponíveis na pasta do Google Drive.",
+      parameters: { type: "object", properties: {} }
     }
   },
   {
     type: "function",
     function: {
       name: "ler_pdf_google_drive",
-      description: "Baixa automaticamente e extrai o texto completo de um arquivo PDF específico armazenado na nuvem do Google Drive.",
+      description: "Baixa e extrai o texto de um PDF específico do Google Drive.",
       parameters: {
         type: "object",
         properties: {
-          nome_arquivo: { type: "string", description: "Nome exato ou aproximado do arquivo PDF presente no Drive (ex: ata_reuniao.pdf)" }
+          nome_arquivo: { type: "string", description: "Nome do arquivo PDF (ex: relatorio.pdf)" }
         },
         required: ["nome_arquivo"]
       }
@@ -134,33 +118,52 @@ function parseArgs(raw) {
   }
 }
 
-// Executor Central de Funções e Ferramentas
 async function executarFuncao(nome, args) {
   try {
     console.log(`🚀 Executando ferramenta local: ${nome}`);
 
     if (nome === "consultar_banco") {
       const sql = (args.sql || "").trim();
-      if (!/^\s*SELECT\b/i.test(sql)) return "Erro: Apenas operações de consulta (SELECT) são permitidas por segurança.";
-      const { rows, fields } = await queryDB(sql);
-      if (!rows.length) return "Nenhum registro encontrado no banco de dados para esta busca.";
+      if (!/^\s*SELECT\b/i.test(sql)) return "Erro: Apenas operações SELECT são permitidas.";
+      const { rows, fields, error } = await queryDB(sql);
+      if (error) return error;
+      if (!rows || !rows.length) return "Nenhum registro encontrado.";
+      
       const colunas = fields.map((f) => f.name);
-      const linhas = rows.slice(0, 50).map((r) => colunas.map((c) => String(r[c] ?? "")).join(" | "));
+      const linhas = rows.slice(0, 100).map((r) => colunas.map((c) => String(r[c] ?? "")).join(" | "));
       let resultado = colunas.join(" | ") + "\n" + "-".repeat(40) + "\n" + linhas.join("\n");
-      if (rows.length > 50) resultado += `\n... e mais ${rows.length - 50} registros truncados por tamanho.`;
+      if (rows.length > 100) resultado += `\n\n[Exibindo 100 de ${rows.length} registros. Se precisar de mais, refine o SQL].`;
       return resultado;
+    }
+
+    if (nome === "listar_abas_planilha") {
+      const abas = await listSheets();
+      return `Abas disponíveis nesta planilha do Google Sheets: [${abas.join(", ")}]. Use a ferramenta 'ler_planilha' com um destes nomes para ver os dados.`;
     }
 
     if (nome === "ler_planilha") {
       const aba = (args.aba || "").trim();
       const filtro = args.filtro || "";
-      if (!aba || aba.toLowerCase() === "listar") {
-        const abas = await listSheets();
-        return `Abas disponíveis na planilha do Google Sheets: ${abas.join(", ")}`;
-      }
+      
       const dados = await readSheet(aba, filtro);
-      if (!dados.length) return `A aba '${aba}' está vazia ou não foi encontrada.`;
-      return dados.slice(0, 50).map((row) => row.join(" | ")).join("\n");
+      
+      if (!dados || dados.length === 0) {
+        return `A aba '${aba}' está vazia ou não existe. Use a ferramenta listar_abas_planilha para confirmar os nomes corretos.`;
+      }
+
+      // Verifica se é a mensagem de erro do Try/Catch (proteção que fizemos no ficheiro anterior)
+      if (dados[0] && dados[0][0] && String(dados[0][0]).includes("Aviso para a IA")) {
+        return dados[0][0];
+      }
+
+      const limit = 150; // Limite generoso de leitura para a IA analisar de uma vez
+      const amostra = dados.slice(0, limit).map((row) => row.join(" | ")).join("\n");
+      let resultado = amostra;
+      
+      if (dados.length > limit) {
+         resultado += `\n\n[ATENÇÃO: A aba possui ${dados.length} linhas, mas apenas as primeiras ${limit} foram enviadas para evitar sobrecarga de memória. Se o utilizador procura algo específico que não está aqui, refaça a busca utilizando o parâmetro 'filtro'].`;
+      }
+      return resultado;
     }
 
     if (nome === "gerar_relatorio_pdf") {
@@ -168,21 +171,11 @@ async function executarFuncao(nome, args) {
       return `PDF criado com sucesso! Link seguro para baixar: ${BASE_URL}/reports/${filename}`;
     }
 
-    if (nome === "ler_pdf_local") {
-      const nomeArq = (args.nome_arquivo || "").trim();
-      if (!nomeArq || nomeArq.toLowerCase() === "listar") {
-        const lista = listPDFs();
-        return lista.length ? `PDFs locais na pasta pdfs/: ${lista.join(", ")}` : "Nenhum arquivo encontrado na pasta local pdfs/.";
-      }
-      const texto = await extractPDFText(nomeArq);
-      return texto.length > 8000 ? texto.substring(0, 8000) + "\n[Conteúdo Longo - Truncado]" : texto;
-    }
-
     if (nome === "listar_google_drive") {
       const { listDrivePdfs } = require("./drive");
       const arquivos = await listDrivePdfs();
-      if (!arquivos.length) return "Nenhum arquivo PDF encontrado na pasta vinculada do Google Drive.";
-      return "Arquivos localizados no Google Drive:\n" + arquivos.map(f => `- 📄 ${f.name}`).join("\n");
+      if (!arquivos.length) return "Nenhum PDF encontrado no Drive.";
+      return "Arquivos no Drive:\n" + arquivos.map(f => `- 📄 ${f.name}`).join("\n");
     }
 
     if (nome === "ler_pdf_google_drive") {
@@ -193,39 +186,34 @@ async function executarFuncao(nome, args) {
       const nomeArq = (args.nome_arquivo || "").trim();
       const arquivos = await listDrivePdfs();
       const arquivoAlvo = arquivos.find(f => 
-        f.name.toLowerCase().includes(nomeArq.toLowerCase()) || 
-        nomeArq.toLowerCase().includes(f.name.toLowerCase().replace(".pdf", ""))
+        f.name.toLowerCase().includes(nomeArq.toLowerCase())
       );
 
-      if (!arquivoAlvo) {
-        return `O arquivo '${nomeArq}' não foi localizado no Google Drive. Use a ferramenta listar_google_drive para conferir os nomes.`;
-      }
+      if (!arquivoAlvo) return `Arquivo '${nomeArq}' não encontrado no Drive.`;
 
       const caminhoLocal = await downloadDrivePdf(arquivoAlvo.id, arquivoAlvo.name);
-      if (!caminhoLocal) return "Erro operacional ao tentar baixar o arquivo do Google Drive.";
+      if (!caminhoLocal) return "Erro ao baixar do Drive.";
 
       const dataBuffer = fs.readFileSync(caminhoLocal);
       const pdfDados = await pdfParse(dataBuffer);
       const texto = pdfDados.text || "";
-      return texto.length > 8000 ? texto.substring(0, 8000) + "\n[Conteúdo Longo - Truncado]" : texto;
+      return texto.length > 10000 ? texto.substring(0, 10000) + "\n[Conteúdo Truncado]" : texto;
     }
 
-    return `Função não cadastrada no motor de execução: ${nome}`;
+    return `Função desconhecida: ${nome}`;
   } catch (err) {
-    console.error(`Erro na execução da ferramenta [${nome}]:`, err.message);
-    return `Erro ao processar dados da ferramenta: ${err.message}`;
+    console.error(`Erro na ferramenta [${nome}]:`, err.message);
+    return `Erro técnico ao processar: ${err.message}`;
   }
 }
 
-// RETRY LOOP PARA RATE LIMITS (429)
 async function callWithRetry(apiCallFn, tentativas = 3) {
   for (let i = 0; i < tentativas; i++) {
     try {
       return await apiCallFn();
     } catch (err) {
-      const is429 = err.status === 429 || (err.message && err.message.includes("429"));
-      if (is429 && i < tentativas - 1) {
-        console.log(`⏳ Limite de requisições atingido. Aguardando 10 segundos antes do re-envio...`);
+      if ((err.status === 429 || String(err.message).includes("429")) && i < tentativas - 1) {
+        console.log(`⏳ Rate limit da IA. Aguardando 10s...`);
         await new Promise(r => setTimeout(r, 10000));
       } else {
         throw err;
@@ -234,30 +222,21 @@ async function callWithRetry(apiCallFn, tentativas = 3) {
   }
 }
 
-/**
- * MOTOR CENTRAL DE PROCESSAMENTO DE MENSAGENS (ROUTING INTELIGENTE)
- */
 async function processMessage(sender, text) {
   const provider = (process.env.AI_PROVIDER || "groq").toLowerCase();
   const apiKey = process.env.AI_API_KEY || process.env.GROQ_API_KEY;
 
-  if (!apiKey) {
-    return "⚠️ Chave de API da Inteligência Artificial não configurada no Painel Admin. Acesse http://localhost:3000/config para ajustar.";
-  }
-
+  if (!apiKey) return "⚠️ Chave de API da IA não configurada no Painel Admin.";
   if (!historicos[sender]) historicos[sender] = [];
 
   try {
-    // ROTEAMENTO 1 & 2: GROQ OU GEMINI (Ambos usam formato OpenAI SDK ou compatível)
     if (provider === "groq" || provider === "gemini") {
-      let client;
-      let model;
+      let client, model;
 
       if (provider === "groq") {
         client = new Groq({ apiKey });
         model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
       } else {
-        // Usa o endpoint de compatibilidade oficial do Google Gemini para economizar código e otimizar chamadas
         client = new Groq({ apiKey, baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/" });
         model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
       }
@@ -269,121 +248,79 @@ async function processMessage(sender, text) {
       ];
 
       let response = await callWithRetry(() => client.chat.completions.create({
-        model,
-        messages,
-        tools,
-        tool_choice: "auto",
-        max_tokens: 2048
+        model, messages, tools, tool_choice: "auto", max_tokens: 2048
       }));
 
       let msg = response.choices[0].message;
       messages.push(msg);
 
-      // Loop de execução sequencial de ferramentas (Máximo 5 voltas)
       for (let i = 0; i < 5; i++) {
         if (!msg.tool_calls || msg.tool_calls.length === 0) break;
 
         for (const call of msg.tool_calls) {
           const args = parseArgs(call.function.arguments);
           const result = await executarFuncao(call.function.name, args);
-          messages.push({
-            role: "tool",
-            tool_call_id: call.id,
-            content: String(result),
-          });
+          messages.push({ role: "tool", tool_call_id: call.id, content: String(result) });
         }
 
         response = await callWithRetry(() => client.chat.completions.create({
-          model,
-          messages,
-          tools,
-          tool_choice: "auto",
-          max_tokens: 2048
+          model, messages, tools, tool_choice: "auto", max_tokens: 2048
         }));
         msg = response.choices[0].message;
         messages.push(msg);
       }
 
-      historicos[sender] = messages.slice(1).slice(-20); // Mantém últimas interações salvas no cache
-      return msg.content || "Relatório processado com sucesso pelas ferramentas.";
+      historicos[sender] = messages.slice(1).slice(-20);
+      return msg.content || "Análise concluída.";
     }
 
-    // ROTEAMENTO 3: ANTHROPIC CLAUDE HAIKU
     if (provider === "anthropic") {
       const Anthropic = require("@anthropic-ai/sdk");
       const anthropic = new Anthropic({ apiKey });
       const model = process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-20241022";
 
-      // Converte histórico para o formato estrito da Anthropic (Sem mensagens de sistema misturadas)
       const filteredHistory = historicos[sender].filter(m => m.role !== "system").map(m => ({
         role: m.role === "tool" ? "user" : (m.role === "assistant" ? "assistant" : "user"),
-        content: m.content || "Executando ação..."
+        content: m.content || "Ação em processamento..."
       }));
 
-      let anthropicMessages = [
-        ...filteredHistory,
-        { role: "user", content: text }
-      ];
-
+      let anthropicMessages = [...filteredHistory, { role: "user", content: text }];
       const anthropicTools = tools.map(t => ({
-        name: t.function.name,
-        description: t.function.description,
-        input_schema: t.function.parameters
+        name: t.function.name, description: t.function.description, input_schema: t.function.parameters
       }));
 
       let response = await callWithRetry(() => anthropic.messages.create({
-        model,
-        max_tokens: 2048,
-        system: SYSTEM_PROMPT,
-        messages: anthropicMessages,
-        tools: anthropicTools
+        model, max_tokens: 2048, system: SYSTEM_PROMPT, messages: anthropicMessages, tools: anthropicTools
       }));
 
-      // Loop de Function Calling para o Claude
       for (let i = 0; i < 5; i++) {
         if (response.stop_reason !== "tool_use") break;
-
         const toolBlocks = response.content.filter(c => c.type === "tool_use");
         if (toolBlocks.length === 0) break;
 
         anthropicMessages.push({ role: "assistant", content: response.content });
-
         const toolResultContent = [];
+        
         for (const block of toolBlocks) {
           const result = await executarFuncao(block.name, block.input);
-          toolResultContent.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: String(result)
-          });
+          toolResultContent.push({ type: "tool_result", tool_use_id: block.id, content: String(result) });
         }
 
         anthropicMessages.push({ role: "user", content: toolResultContent });
-
         response = await callWithRetry(() => anthropic.messages.create({
-          model,
-          max_tokens: 2048,
-          system: SYSTEM_PROMPT,
-          messages: anthropicMessages,
-          tools: anthropicTools
+          model, max_tokens: 2048, system: SYSTEM_PROMPT, messages: anthropicMessages, tools: anthropicTools
         }));
       }
 
-      // Salva o histórico limpo estruturado
       historicos[sender] = anthropicMessages.slice(-20);
-      
       const textBlock = response.content.find(c => c.type === "text");
-      return textBlock ? textBlock.text : "Comando concluído com sucesso.";
+      return textBlock ? textBlock.text : "Tarefa concluída com sucesso.";
     }
 
-    return "⚠️ Erro interno: Provedor de inteligência artificial desconhecido ou não suportado.";
-
+    return "⚠️ Erro: IA não configurada.";
   } catch (err) {
-    console.error(`[AI ERROR] Falha crítica de processamento no provedor [${provider}]:`, err.message);
-    if (err.message && err.message.includes("429")) {
-      return "⏳ O limite de tráfego temporário da IA foi atingido. Aguarde alguns instantes e envie a sua pergunta novamente.";
-    }
-    return "❌ Desculpe, não consegui processar essa mensagem agora. Verifique suas conexões e chaves de API no painel admin.";
+    console.error(`[AI ERROR] Falha no [${provider}]:`, err.message);
+    return err.message.includes("429") ? "⏳ Limite de IA atingido, por favor aguarde uns segundos." : "❌ Desculpe, ocorreu uma falha na análise. Verifique o painel.";
   }
 }
 
