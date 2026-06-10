@@ -1,6 +1,6 @@
 /**
  * Servidor HTTP: Painel Administrativo de Configuração Visual (.env)
- * COM WIZARD DE INSTALAÇÃO E DASHBOARD DE LOGS
+ * COM PROCURA AUTOMÁTICA DE PORTA LOCAL DISPONÍVEL E DASHBOARD REAL-TIME
  */
 
 const http = require("http");
@@ -15,6 +15,7 @@ const REPORTS_DIR = path.join(ROOT_DIR, process.env.REPORTS_DIR || "reports");
 const ENV_PATH = path.join(ROOT_DIR, ".env");
 const GROUPS_PATH = path.join(ROOT_DIR, "grupos.json");
 
+// Define a porta inicial (tenta a do sistema, ou 3000 por padrão)
 let currentPort = parseInt(process.env.PORT || 3000, 10);
 let io;
 
@@ -49,7 +50,7 @@ function startServer() {
   const server = http.createServer((req, res) => {
     if (req.url === "/config" && req.method === "GET") {
       const env = getEnvVariables();
-      const isConfigured = env.GROUP_ID && env.AI_API_KEY; // Verifica se já está instalado
+      const isConfigured = env.GROUP_ID && env.AI_API_KEY;
 
       let initialGroups = [];
       if (fs.existsSync(GROUPS_PATH)) {
@@ -69,19 +70,13 @@ function startServer() {
             body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f1f5f9; margin: 0; padding: 40px 20px; color: #1e293b; }
             .container { max-width: 700px; background: #fff; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); margin: auto; }
             h1 { color: #0f172a; text-align: center; font-size: 24px; margin-top: 0; margin-bottom: 30px; }
-            
-            /* Wizard Steps */
             .step { display: none; }
             .step.active { display: block; animation: fadeIn 0.4s ease; }
             @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-            
-            /* Formulários */
             label { font-weight: 600; display: block; margin-top: 20px; color: #334155; font-size: 14px; }
             input, select, textarea { width: 100%; padding: 14px; margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box; font-size: 14px; background: #f8fafc; transition: all 0.2s; }
             input:focus, select:focus, textarea:focus { border-color: #3b82f6; outline: none; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); background: #fff; }
             .hint { font-size: 12px; color: #64748b; margin-top: 6px; }
-            
-            /* Botões */
             .btn-group { display: flex; justify-content: space-between; margin-top: 30px; }
             button { padding: 14px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.2s; border: none; font-size: 14px; }
             .btn-primary { background: #3b82f6; color: white; width: 100%; }
@@ -90,12 +85,8 @@ function startServer() {
             .btn-secondary:hover { background: #cbd5e1; }
             .btn-next { background: #10b981; color: white; width: 48%; }
             .btn-next:hover { background: #059669; }
-            
-            /* Componentes Visuais */
             #status-box { background: #fef9c3; padding: 20px; border-radius: 12px; border: 1px solid #fef08a; color: #854d0e; text-align: center; transition: all 0.3s; margin-bottom: 20px; }
             #qr-image { margin-top: 20px; border-radius: 8px; display: none; margin-left: auto; margin-right: auto; max-width: 250px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-            
-            /* Terminal de Logs */
             .terminal { background: #0f172a; color: #38bdf8; font-family: monospace; padding: 15px; border-radius: 8px; height: 300px; overflow-y: auto; font-size: 13px; line-height: 1.5; margin-top: 20px; }
             .terminal p { margin: 4px 0; }
             .log-user { color: #f472b6; }
@@ -177,7 +168,6 @@ function startServer() {
           </div>
 
           <script>
-            // Lógica do Wizard (Passo a Passo)
             function nextStep(current) {
               document.getElementById('step-' + current).classList.remove('active');
               document.getElementById('step-' + (current + 1)).classList.add('active');
@@ -187,11 +177,9 @@ function startServer() {
               document.getElementById('step-' + (current - 1)).classList.add('active');
             }
 
-            // WebSocket Client Logic
             const socket = io();
             const savedGroupId = "${env.GROUP_ID || ''}";
             
-            // Elementos UI
             const statusBox = document.getElementById('status-box');
             const statusText = document.getElementById('status-text');
             const qrImage = document.getElementById('qr-image');
@@ -213,16 +201,12 @@ function startServer() {
               container.innerHTML = html;
             }
 
-            // Carrega grupos em cache se houver
             if(${initialGroups.length} > 0) renderGroups(${JSON.stringify(initialGroups)});
 
-            // Eventos do WebSocket (QR Code e Conexão)
             socket.on('qr', (base64Data) => {
-              // Atualiza o Wizard
               statusBox.style.background = '#e0f2fe'; statusBox.style.borderColor = '#bae6fd'; statusBox.style.color = '#0c4a6e';
               statusText.innerHTML = '📱 <b>Escaneie o QR Code com o telemóvel:</b>';
               qrImage.src = base64Data; qrImage.style.display = 'block';
-              // Atualiza o Dashboard
               dashDot.style.background = '#ef4444'; dashDot.style.boxShadow = '0 0 8px #ef4444';
               dashText.innerHTML = 'Desconectado (QR Pendente)';
             });
@@ -238,10 +222,7 @@ function startServer() {
               addLog('sys', 'WhatsApp autenticado e grupos sincronizados.');
             });
 
-            // Adiciona Logs no Terminal Visual
-            socket.on('log', (data) => {
-              addLog(data.type, data.msg);
-            });
+            socket.on('log', (data) => { addLog(data.type, data.msg); });
 
             function addLog(type, msg) {
               const p = document.createElement('p');
@@ -249,7 +230,7 @@ function startServer() {
               p.className = 'log-' + type;
               p.innerText = \`[\${time}] \${msg}\`;
               terminal.appendChild(p);
-              terminal.scrollTop = terminal.scrollHeight; // Auto-scroll
+              terminal.scrollTop = terminal.scrollHeight;
             }
           </script>
         </body>
@@ -284,9 +265,33 @@ function startServer() {
   });
 
   io = new Server(server);
-  server.listen(currentPort, () => {
-    console.log(`[PAINEL ADMIN] UI iniciada com WebSockets! URL: http://localhost:${currentPort}/config`);
+
+  // --- MUDANÇA ESTRUTURAL: GESTÃO DINÂMICA DE PORTAS MALHA-A-MALHA ---
+  
+  // Evento disparado apenas quando o Node consegue reservar a porta com sucesso absoluto
+  server.on("listening", () => {
+    const portAtiva = server.address().port;
+    console.log(`\n=============================================================`);
+    console.log(`🛠️  PAINEL ADMIN ATIVO: http://localhost:${portAtiva}/config`);
+    console.log(`=============================================================`);
+    
+    // Abre o navegador padrão do Windows diretamente na porta certa que foi liberada
+    exec(`start http://localhost:${portAtiva}/config`);
   });
+
+  // Evento disparado caso ocorra algum erro na tentativa de escuta
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.log(`⚠️  Porta ${currentPort} ocupada. A tentar a próxima porta disponível...`);
+      currentPort++; // Soma +1 na tentativa
+      server.listen(currentPort); // Tenta novamente
+    } else {
+      console.error("❌ Erro fatal no servidor HTTP:", err.message);
+    }
+  });
+
+  // Inicia a primeira tentativa (se a 3000 estiver livre, usa ela; senão ativa o loop acima)
+  server.listen(currentPort);
 }
 
 function getIo() { return io; }
