@@ -1,6 +1,6 @@
 /**
  * Bot WhatsApp - Administração Jacy Afonso (PT/DF)
- * Arquitetura Autônoma Plug-and-Play com Logs na Web
+ * Arquitetura Autônoma com Ativação Exclusiva por @ ou "JacyBot"
  */
 
 require("dotenv").config();
@@ -24,11 +24,11 @@ const AUTH_DIR = path.join(ROOT_DIR, "auth_session");
 const GROUP_ID = process.env.GROUP_ID || "";
 const logger = pino({ level: "silent" });
 
-// Função auxiliar para enviar logs para a Interface Web
+// Envia logs em tempo real para o Painel Web Dashboard
 function sendLog(type, message) {
   const io = getIo();
   if (io) io.emit("log", { type, msg: message });
-  console.log(`[${type.toUpperCase()}] ${message}`); // Mantém no console para dev
+  console.log(`[${type.toUpperCase()}] ${message}`);
 }
 
 async function startBot() {
@@ -58,7 +58,7 @@ async function startBot() {
     const io = getIo();
 
     if (qr) {
-      sendLog('sys', 'Novo QR Code gerado. A aguardar leitura do utilizador.');
+      sendLog('sys', 'Novo QR Code gerado. A aguardar leitura no Painel Web.');
       try {
         const qrImageBase64 = await qrcode.toDataURL(qr);
         if (io) io.emit("qr", qrImageBase64);
@@ -81,17 +81,17 @@ async function startBot() {
       }
 
       if (GROUP_ID) {
-        sendLog('sys', `Monitorização ativa no grupo configurado.`);
+        sendLog('sys', `Monitorização ativa e inteligente configurada.`);
       }
     }
 
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
       if (code !== DisconnectReason.loggedOut) {
-        sendLog('sys', 'Conexão interrompida (Possível queda de internet). A reconectar em 3s...');
+        sendLog('sys', 'Conexão interrompida. A reconectar em 3s...');
         setTimeout(startBot, 3000);
       } else {
-        sendLog('sys', 'Sessão terminada pelo telemóvel. Elimine a pasta auth_session para reiniciar.');
+        sendLog('sys', 'Sessão terminada. Elimine a pasta auth_session para reiniciar.');
       }
     }
   });
@@ -104,7 +104,9 @@ async function startBot() {
         if (msg.key.fromMe || !msg.message) continue;
 
         const from = msg.key.remoteJid;
-        if (GROUP_ID && from !== GROUP_ID) continue;
+        
+        // Se houver um grupo alvo configurado no .env, ignora mensagens de outros grupos
+        if (GROUP_ID && from.endsWith("@g.us") && from !== GROUP_ID) continue;
 
         const text = (
           msg.message.conversation ||
@@ -115,21 +117,40 @@ async function startBot() {
 
         if (!text) continue;
 
+        // --- FILTRO DE ATIVAÇÃO AJUSTADO ---
+        const isGroup = from.endsWith("@g.us");
+        
+        if (isGroup) {
+          // 1. Descobre o ID do próprio bot para ver se ele foi marcado (@)
+          const meuId = sock.user && sock.user.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : '';
+          const marcacoes = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
+          const foiMarcado = marcacoes.includes(meuId);
+
+          // 2. MUDANÇA: Agora verifica se a palavra exata "jacybot" está no texto
+          const textoMinusculo = text.toLowerCase();
+          const falouNome = textoMinusculo.includes("jacybot");
+
+          // Se não foi marcado por @ e nem digitaram "JacyBot", ignora e continua ouvindo
+          if (!foiMarcado && !falouNome) {
+            continue;
+          }
+        }
+        // ------------------------------------------------------
+
         const sender = msg.pushName || msg.key.participant?.split("@")[0] || "Utilizador";
         
-        // Regista a entrada no Dashboard Web
+        // Regista o chamado no Dashboard Web
         sendLog('user', `${sender}: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
 
         await sock.sendPresenceUpdate("composing", from);
         
-        sendLog('sys', `A processar resposta via IA para ${sender}...`);
+        sendLog('sys', `Cérebro ativado! A processar resposta para ${sender}...`);
         const resposta = await processMessage(sender, text);
         
         await sock.sendMessage(from, { text: resposta });
         await sock.sendPresenceUpdate("paused", from);
 
-        // Regista a saída no Dashboard Web
-        sendLog('bot', `Bot respondeu: ${resposta.substring(0, 50)}...`);
+        sendLog('bot', `Respondeu a ${sender}.`);
 
       } catch (err) {
         sendLog('sys', `Erro ao processar mensagem: ${err.message}`);
