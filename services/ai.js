@@ -5,7 +5,7 @@
 require("dotenv").config();
 const Groq = require("groq-sdk");
 const { queryDB } = require("./db");
-const { readSheet, listSheets } = require("./sheets");
+const { readSheet, listSheets, groupSheetData } = require("./sheets");
 const { generatePDF, extractPDFText, listPDFs } = require("./reports");
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -103,6 +103,21 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "segmentar_apoiadores",
+      description: "Conta e agrupa a quantidade de pessoas na planilha com base em uma coluna específica (ex: 'Cidade', 'Bairro', 'Profissão'). Essencial para responder perguntas de geografia ou totais numéricos.",
+      parameters: {
+        type: "object",
+        properties: {
+          aba: { type: "string", description: "O nome da aba (ex: 'Respostas ao formulário 1')" },
+          coluna: { type: "string", description: "O nome da coluna na qual você quer agrupar/contar (ex: 'Cidade', 'Profissão', 'Origem')" }
+        },
+        required: ["aba", "coluna"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "consultar_agenda_google",
       description: "Consulta a agenda do Google Calendar para ver os próximos eventos, compromissos e reuniões do candidato.",
       parameters: {
@@ -167,6 +182,12 @@ async function executarFuncao(nome, args) {
       const { getUpcomingEvents } = require("./calendar");
       const qtd = args.quantidade || 10;
       return await getUpcomingEvents(qtd);
+    }
+
+    if (nome === "segmentar_apoiadores") {
+      const aba = args.aba || "";
+      const coluna = args.coluna || "";
+      return await groupSheetData(aba, coluna);
     }
 
     if (nome === "listar_abas_planilha") {
