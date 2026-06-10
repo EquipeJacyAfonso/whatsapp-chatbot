@@ -5,7 +5,7 @@
 require("dotenv").config();
 const Groq = require("groq-sdk");
 const { queryDB } = require("./db");
-const { readSheet, listSheets, groupSheetData } = require("./sheets");
+const { readSheet, listSheets, groupSheetData, filterSheetAdvanced } = require("./sheets");
 const { generatePDF, extractPDFText, listPDFs } = require("./reports");
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -118,6 +118,31 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "filtrar_contatos_avancado",
+      description: "Cruza dados para buscar pessoas específicas na planilha. Permite pesquisar usando múltiplos filtros ao mesmo tempo (ex: Profissão = 'Médico' E Cidade = 'Taguatinga').",
+      parameters: {
+        type: "object",
+        properties: {
+          aba: { type: "string", description: "Nome exato da aba (ex: 'Respostas ao formulário 1')" },
+          filtros: {
+            type: "array",
+            description: "Lista de filtros a aplicar",
+            items: {
+              type: "object",
+              properties: {
+                coluna: { type: "string", description: "Nome da coluna (ex: 'Cidade', 'Profissão', 'Área de atuação')" },
+                valor: { type: "string", description: "Valor a procurar (ex: 'Taguatinga', 'Saúde', 'Enfermeiro')" }
+              }
+            }
+          }
+        },
+        required: ["aba", "filtros"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "consultar_agenda_google",
       description: "Consulta a agenda do Google Calendar para ver os próximos eventos, compromissos e reuniões do candidato.",
       parameters: {
@@ -199,6 +224,12 @@ async function executarFuncao(nome, args) {
       const { pesquisarWeb } = require("./web");
       const query = args.termo_pesquisa || "";
       return await pesquisarWeb(query);
+    }
+
+    if (nome === "filtrar_contatos_avancado") {
+      const aba = args.aba || "";
+      const filtros = args.filtros || [];
+      return await filterSheetAdvanced(aba, filtros);
     }
 
     if (nome === "ler_planilha") {

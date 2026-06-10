@@ -131,4 +131,88 @@ async function groupSheetData(sheetName, columnName) {
   }
 }
 
-module.exports = { listSheets, readSheet, groupSheetData };
+async function filterSheetAdvanced(sheetName, filtros) {
+  const auth = getAuth();
+  if (!auth) return "Aviso para a IA: Google Sheets não configurado.";
+
+  try {
+    const sheets = google.sheets({ version: "v4", auth });
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: sheetName,
+    });
+
+    const rows = res.data.values || [];
+    if (rows.length < 2) return `A aba '${sheetName}' está vazia.`;
+
+    const header = rows[0].map(h => String(h).trim().toLowerCase());
+
+    // Mapeia os filtros que a IA pediu para os índices reais das colunas da planilha
+    const filtrosValidos = [];
+    for (const f of filtros) {
+      const searchCol = String(f.coluna).trim().toLowerCase();
+      const colIndex = header.findIndex(h => h.includes(searchCol) || searchCol.includes(h));
+      if (colIndex !== -1) {
+        filtrosValidos.push({ index: colIndex, valor: String(f.valor).trim().toLowerCase() });
+      }
+    }
+
+    if (filtrosValidos.length === 0) {
+       return `Aviso para a IA: Nenhuma das colunas solicitadas foi encontrada. Colunas disponíveis: [${rows[0].join(', ')}]`;
+    }
+
+    // Procura nas milhares de linhas quem atende a TODOS os filtros
+    const resultados = [];
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      let matchAll = true;
+
+      for (const f of filtrosValidos) {
+        const cellValue = (row[f.index] || "").toString().toLowerCase();
+        if (!cellValue.includes(f.valor)) {
+          matchAll = false;
+          break;
+        }
+      }
+
+      if (matchAll) {
+        resultados.push(row);
+      }
+    }
+
+    if (resultados.length === 0) {
+      return `Nenhum contato encontrado com esses critérios específicos.`;
+    }
+
+    // Formata o resultado para não sobrecarregar a memória da IA (limite de 20 pessoas)
+    const limit = 20;
+    let output = `🔍 Busca Avançada: Encontrados ${resultados.length} contatos que batem com os critérios exatos.\n\n`;
+
+    // Descobre as colunas mais importantes para destacar no resumo (Nome e WhatsApp)
+    const nomeIdx = header.findIndex(h => h.includes("nome"));
+    const telIdx = header.findIndex(h => h.includes("whatsapp") || h.includes("telefone"));
+
+    for(let i = 0; i < Math.min(limit, resultados.length); i++) {
+        const r = resultados[i];
+        const nome = nomeIdx !== -1 ? (r[nomeIdx] || "Sem Nome") : (r[0] || "Sem Nome");
+        const tel = telIdx !== -1 ? (r[telIdx] || "Sem telefone") : "Sem telefone";
+        
+        // Pega todos os dados daquela pessoa
+        const detalhes = r.map((dado, index) => `${rows[0][index]}: ${dado}`).join(" | ");
+        
+        output += `👤 **${nome}** (📱 ${tel})\n   ℹ️ ${detalhes}\n\n`;
+    }
+
+    if(resultados.length > limit) {
+       output += `... e mais ${resultados.length - limit} pessoas não listadas aqui para economizar memória.`;
+    }
+
+    return output;
+
+  } catch (error) {
+    console.error("Erro na busca avançada:", error.message);
+    return `Erro na busca avançada: ${error.message}`;
+  }
+}
+
+module.exports = { listSheets, readSheet, groupSheetData, filterSheetAdvanced };
