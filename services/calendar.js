@@ -27,33 +27,36 @@ async function getUpcomingEvents(maxResults = 10) {
 
   try {
     const calendar = google.calendar({ version: "v3", auth });
-    
-    // Usa o ID da agenda configurado no .env ou tenta a agenda principal da Service Account
     const calendarId = process.env.CALENDAR_ID || "primary";
+
+    // MUDANÇA PROSVEITOSA: Define o início do dia de hoje (00:00:00) no horário local
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0); 
 
     const res = await calendar.events.list({
       calendarId: calendarId,
-      timeMin: new Date().toISOString(), // Pega apenas eventos de hoje para a frente
+      timeMin: hoje.toISOString(), // Busca tudo a partir do primeiro minuto do dia de hoje
       maxResults: maxResults,
       singleEvents: true,
       orderBy: "startTime",
     });
 
     const events = res.data.items;
+    
+    // Se a API responder com sucesso mas a lista vier vazia
     if (!events || events.length === 0) {
-      return `Nenhum evento futuro encontrado na agenda.`;
+      return `Não encontrei nenhum compromisso ou evento agendado para os próximos dias na agenda (${calendarId}).`;
     }
 
-    let responseText = `Próximos eventos encontrados na agenda:\n\n`;
+    let responseText = `📅 **Próximos Compromissos da Agenda:**\n\n`;
     events.forEach((event) => {
       const start = event.start.dateTime || event.start.date;
-      const end = event.end.dateTime || event.end.date;
-      const dataInicio = new Date(start).toLocaleString('pt-BR');
+      const dataInicio = new Date(start).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
       
-      responseText += `📅 **${event.summary}**\n`;
-      responseText += `   🕒 Início: ${dataInicio}\n`;
+      responseText += `📌 **${event.summary}**\n`;
+      responseText += `   🕒 Horário: ${dataInicio}\n`;
       if (event.location) responseText += `   📍 Local: ${event.location}\n`;
-      if (event.description) responseText += `   📝 Detalhes: ${event.description}\n`;
+      if (event.description) responseText += `   📝 Notas: ${event.description}\n`;
       responseText += `\n`;
     });
 
