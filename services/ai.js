@@ -146,11 +146,11 @@ const tools = [
     type: "function",
     function: {
       name: "consultar_agenda_google",
-      description: "Consulta a agenda do Google Calendar para ver os próximos eventos, compromissos e reuniões do candidato.",
+      description: "Consulta a agenda do Google Calendar para ver os próximos eventos, compromissos e reuniões.",
       parameters: {
         type: "object",
         properties: {
-          quantidade: { type: "integer", description: "Número de próximos eventos a procurar (padrão 10)" }
+          quantidade: { type: "string", description: "Número de eventos a procurar (ex: '10')" }
         }
       }
     }
@@ -207,7 +207,8 @@ async function executarFuncao(nome, args) {
 
     if (nome === "consultar_agenda_google") {
       const { getUpcomingEvents } = require("./calendar");
-      const qtd = args.quantidade || 10;
+      // MUDANÇA: Converte o valor para número, ignorando se a IA mandar texto com aspas
+      const qtd = parseInt(args.quantidade || "10", 10);
       return await getUpcomingEvents(qtd);
     }
 
@@ -405,7 +406,7 @@ async function processMessage(sender, text) {
         }));
       }
 
-      historicos[sender] = anthropicMessages.slice(-20);
+      historicos[sender] = anthropicMessages.slice(-6);
       const textBlock = response.content.find(c => c.type === "text");
       return textBlock ? textBlock.text : "Tarefa concluída com sucesso.";
     }
