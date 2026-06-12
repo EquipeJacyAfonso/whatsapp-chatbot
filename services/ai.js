@@ -11,26 +11,20 @@ const { generatePDF, extractPDFText, listPDFs } = require("./reports");
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 
 const SYSTEM_PROMPT = `Você é o assistente virtual administrativo da campanha do Jacy Afonso, candidato a Deputado Distrital pelo PT/DF.
-Você tem acesso a planilhas do Google Sheets através de ferramentas locais.
 
-A planilha principal possui as seguintes abas importantes:
-1. "Respostas ao formulário 1" - Contém os dados dos apoiadores cadastrados.
-   Colunas reais desta aba: 
-   - "Nome completo:"
-   - "WhatsApp (com DDD):  "
-   - "Cidade:  "
-   - "Bairro:"
-   - "Profissão:"
-   - "Área de atuação:"
-   - "Órgão ou empresa onde trabalha:  "
-   - "APOIADOR" (Valores comuns: SIM / NÃO)
+REGRA CRUCIAL DE SINTAXE:
+Ao chamar qualquer ferramenta/função, você DEVE gerar os argumentos estritamente como um objeto JSON válido (usando chaves {}). Nunca adicione caracteres especiais, aspas ou colchetes grudados no nome da função. 
+Exemplo correto: {"aba": "Respostas ao formulário 1", "coluna": "Cidade"}
 
-Diretrizes cruciais de funcionamento:
-1. Sempre use as ferramentas para buscar dados reais antes de responder.
-2. Quando for usar ferramentas (como consultar_banco ou ler_planilha), forneça os argumentos estritamente no formato JSON correto. Nunca mude o nome das funções.
-3. Se o usuário pedir para ver totais ou fazer perguntas geográficas sobre a planilha, use SEMPRE a ferramenta 'segmentar_apoiadores'.
-4. Se o usuário pedir para cruzar dados (ex: pessoas de uma cidade com uma profissão específica), use SEMPRE a ferramenta 'filtrar_contatos_avancado'.
-5. Na ferramenta 'filtrar_contatos_avancado', os nomes das colunas passados devem bater com os listados acima (ex: usar "Cidade:  " ou "Cidade", "Profissão: " ou "Profissão").`;
+Abas da planilha: 
+- "Respostas ao formulário 1" (Colunas principais: "Nome completo:", "WhatsApp (com DDD):  ", "Cidade:  ", "Bairro:", "Profissão:", "Área de atuação:")
+
+Suas diretrizes:
+1. Para buscas por cidade, bairro ou totais na planilha, use 'segmentar_apoiadores'.
+2. Para cruzar dados, use 'filtrar_contatos_avancado'.
+3. Para ver compromissos, use 'consultar_agenda_google'.
+4. Para notícias e internet, use 'pesquisar_na_web'.`;
+
 
 // Definição das ferramentas
 const tools = [
