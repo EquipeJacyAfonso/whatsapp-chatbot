@@ -1,6 +1,7 @@
 /**
- * Bot WhatsApp - Administração Jacy Afonso (PT/DF)
- * Arquitetura Autônoma com Ativação Exclusiva por @ ou "JacyBot"
+ * Bot WhatsApp Administrativo — Jacy Afonso (PT/DF)
+ * Responde perguntas sobre dados do PostgreSQL, Google Sheets e Google Drive
+ * via mensagens no WhatsApp, gerando relatórios em texto ou PDF.
  */
 
 require("dotenv").config();
@@ -11,33 +12,26 @@ const {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
 } = require("@whiskeysockets/baileys");
-const qrcode = require("qrcode");
-const pino = require("pino");
-const path = require("path");
-const fs = require("fs");
+const qrcode = require("qrcode-terminal");
+const pino   = require("pino");
+const path   = require("path");
+const fs     = require("fs");
 
 const { processMessage } = require("./services/ai");
-const { startServer, getIo } = require("./server");
+const { startServer }    = require("./server");
 
-const ROOT_DIR = process.cwd();
-const AUTH_DIR = path.join(ROOT_DIR, "auth_session");
-const GROUP_ID = process.env.GROUP_ID || "";
-const logger = pino({ level: "silent" });
-
-// Envia logs em tempo real para o Painel Web Dashboard
-function sendLog(type, message) {
-  const io = getIo();
-  if (io) io.emit("log", { type, msg: message });
-  console.log(`[${type.toUpperCase()}] ${message}`);
-}
+const logger   = pino({ level: "silent" });
+const AUTH_DIR = path.join(__dirname, "auth_session");
 
 async function startBot() {
   startServer();
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
+  const { version }          = await fetchLatestBaileysVersion();
 
-  sendLog('sys', 'A iniciar núcleo de comunicação com a Meta/WhatsApp...');
+  console.log("\n========================================================");
+  console.log("   Bot WhatsApp Administrativo — iniciando...");
+  console.log("========================================================\n");
 
   const sock = makeWASocket({
     version,
@@ -55,43 +49,46 @@ async function startBot() {
 
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    const io = getIo();
 
     if (qr) {
-      sendLog('sys', 'Novo QR Code gerado. A aguardar leitura no Painel Web.');
-      try {
-        const qrImageBase64 = await qrcode.toDataURL(qr);
-        if (io) io.emit("qr", qrImageBase64);
-      } catch (err) {}
+      console.log("\n══════════════════════════════════════════════════════");
+      console.log("📱  ESCANEIE O QR CODE COM O WHATSAPP:");
+      console.log("    Abra o app → Aparelhos conectados → Conectar aparelho");
+      console.log("══════════════════════════════════════════════════════\n");
+      qrcode.generate(qr, { small: true });
     }
 
     if (connection === "open") {
-      try {
-        const groups = await sock.groupFetchAllParticipating();
-        const groupList = Object.values(groups).map((g) => ({
-          id: g.id,
-          name: g.subject,
-        }));
-        
-        fs.writeFileSync(path.join(ROOT_DIR, "grupos.json"), JSON.stringify(groupList, null, 2));
-        if (io) io.emit("groups_ready", groupList); 
+      console.log("\n✅ WhatsApp conectado com sucesso!\n");
 
+      // Salva lista de grupos para o painel admin
+      try {
+        const groups     = await sock.groupFetchAllParticipating();
+        const groupList  = Object.values(groups).map((g) => ({ id: g.id, name: g.subject }));
+        fs.writeFileSync(path.join(__dirname, "grupos.json"), JSON.stringify(groupList, null, 2));
+        console.log(`📋 ${groupList.length} grupo(s) sincronizado(s). Painel admin: http://localhost:${process.env.PORT || 3000}/config\n`);
       } catch (err) {
-        sendLog('sys', `Falha ao mapear grupos: ${err.message}`);
+        console.error("Aviso: não foi possível listar grupos.", err.message);
       }
 
-      if (GROUP_ID) {
-        sendLog('sys', `Monitorização ativa e inteligente configurada.`);
+      const groupId = process.env.GROUP_ID;
+      if (!groupId) {
+        console.log("⚠️  GROUP_ID não configurado.");
+        console.log("   Acesse o painel admin, selecione o grupo e salve.\n");
+      } else {
+        console.log(`📡 Monitorando grupo: ${groupId}\n`);
       }
     }
 
     if (connection === "close") {
-      const code = lastDisconnect?.error?.output?.statusCode;
-      if (code !== DisconnectReason.loggedOut) {
-        sendLog('sys', 'Conexão interrompida. A reconectar em 3s...');
+      const code            = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = code !== DisconnectReason.loggedOut;
+
+      if (shouldReconnect) {
+        console.log("🔄 Reconectando em 3 segundos...");
         setTimeout(startBot, 3000);
       } else {
-        sendLog('sys', 'Sessão terminada. Elimine a pasta auth_session para reiniciar.');
+        console.log("❌ Sessão encerrada. Delete a pasta auth_session/ e reinicie.");
       }
     }
   });
@@ -103,10 +100,11 @@ async function startBot() {
       try {
         if (msg.key.fromMe || !msg.message) continue;
 
-        const from = msg.key.remoteJid;
-        
-        // Se houver um grupo alvo configurado no .env, ignora mensagens de outros grupos
-        if (GROUP_ID && from.endsWith("@g.us") && from !== GROUP_ID) continue;
+        const from    = msg.key.remoteJid;
+        const groupId = process.env.GROUP_ID;
+
+        // Só responde no grupo configurado (ou em qualquer chat se não configurado)
+        if (groupId && from !== groupId) continue;
 
         const text = (
           msg.message.conversation ||
@@ -117,46 +115,40 @@ async function startBot() {
 
         if (!text) continue;
 
-        // --- FILTRO DE ATIVAÇÃO AJUSTADO ---
-        const isGroup = from.endsWith("@g.us");
-        
-        if (isGroup) {
-          // 1. Descobre o ID do próprio bot para ver se ele foi marcado (@)
-          const meuId = sock.user && sock.user.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : '';
-          const marcacoes = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
-          const foiMarcado = marcacoes.includes(meuId);
-
-          // 2. MUDANÇA: Agora verifica se a palavra exata "jacybot" está no texto
-          const textoMinusculo = text.toLowerCase();
-          const falouNome = textoMinusculo.includes("jacybot");
-
-          // Se não foi marcado por @ e nem digitaram "JacyBot", ignora e continua ouvindo
-          if (!foiMarcado && !falouNome) {
-            continue;
-          }
-        }
-        // ------------------------------------------------------
-
-        const sender = msg.pushName || msg.key.participant?.split("@")[0] || "Utilizador";
-        
-        // Regista o chamado no Dashboard Web
-        sendLog('user', `${sender}: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
+        const sender = msg.pushName || msg.key.participant?.split("@")[0] || "Usuário";
+        console.log(`💬 [${sender}]: ${text.substring(0, 80)}${text.length > 80 ? "..." : ""}`);
 
         await sock.sendPresenceUpdate("composing", from);
-        
-        sendLog('sys', `Cérebro ativado! A processar resposta para ${sender}...`);
         const resposta = await processMessage(sender, text);
-        
-        await sock.sendMessage(from, { text: resposta });
-        await sock.sendPresenceUpdate("paused", from);
 
-        sendLog('bot', `Respondeu a ${sender}.`);
+        // Divide mensagens longas automaticamente (limite WhatsApp: 4096 chars)
+        const chunks = splitMessage(resposta, 4000);
+        for (const chunk of chunks) {
+          await sock.sendMessage(from, { text: chunk });
+        }
+
+        await sock.sendPresenceUpdate("paused", from);
+        console.log(`✉️  Resposta enviada (${resposta.length} chars)\n`);
 
       } catch (err) {
-        sendLog('sys', `Erro ao processar mensagem: ${err.message}`);
+        console.error("Erro ao processar mensagem:", err.message);
       }
     }
   });
 }
 
-startBot().catch(err => console.error("Erro Crítico:", err));
+function splitMessage(text, maxLen) {
+  if (text.length <= maxLen) return [text];
+  const parts = [];
+  while (text.length > 0) {
+    if (text.length <= maxLen) { parts.push(text); break; }
+    let cut = text.lastIndexOf("\n\n", maxLen);
+    if (cut === -1) cut = text.lastIndexOf("\n", maxLen);
+    if (cut === -1) cut = maxLen;
+    parts.push(text.substring(0, cut).trim());
+    text = text.substring(cut).trim();
+  }
+  return parts;
+}
+
+startBot().catch(console.error);

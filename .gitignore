@@ -1,8 +1,9 @@
 # NUNCA versionar credenciais!
 .env
-*.json
+grupos.json
+auth_session/
 
-# Relatórios gerados
+# Relatórios e PDFs gerados em tempo de execução
 reports/
 pdfs/
 bot.log
@@ -12,3 +13,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Node
+node_modules/
