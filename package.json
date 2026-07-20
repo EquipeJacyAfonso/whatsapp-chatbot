@@ -1,6 +1,6 @@
 {
   "name": "jacy-bot",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Bot WhatsApp Administrativo — Relatórios via IA sobre PostgreSQL, Google Sheets e Google Drive",
   "main": "bot.js",
   "type": "commonjs",
@@ -10,9 +10,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
+    "@google/genai": "^0.14.0",
     "@whiskeysockets/baileys": "^6.7.9",
     "dotenv": "^16.4.7",
     "googleapis": "^144.0.0",
+    "googlethis": "^1.8.0",
     "groq-sdk": "^0.9.1",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.15.1",

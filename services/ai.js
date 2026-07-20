@@ -1,11 +1,10 @@
 /**
  * Serviço de IA Multi-Provedor (Groq, Gemini, Anthropic) com Roteamento Avançado e Ferramentas
- * Versão Corrigida: Suporte Nativo SDK Google Gen AI @google/genai (Sem 404) e Histórico Otimizado
  */
 
 require("dotenv").config();
 const Groq = require("groq-sdk");
-const { GoogleGenAI } = require("@google/genai"); // Importação oficial atualizada
+const { GoogleGenAI } = require("@google/genai");
 const { queryDB } = require("./db");
 const { readSheet, listSheets, groupSheetData, filterSheetAdvanced } = require("./sheets");
 const { generatePDF } = require("./reports");
@@ -26,6 +25,19 @@ Suas diretrizes:
 2. Para cruzar dados, use 'filtrar_contatos_avancado'.
 3. Para ver compromissos, use 'consultar_agenda_google'.
 4. Para notícias e internet, use 'pesquisar_na_web'.`;
+
+// CORREÇÃO: modelos padrão centralizados. Todos os providers agora leem
+// a MESMA variável AI_MODEL (documentada no .env.example), com fallback
+// específico por provedor apenas quando AI_MODEL não é definido.
+const DEFAULT_MODELS = {
+  groq: "llama-3.3-70b-versatile",
+  gemini: "gemini-2.5-flash",
+  anthropic: "claude-haiku-4-5-20251001", // atualizado para bater com .env.example
+};
+
+function resolveModel(provider) {
+  return process.env.AI_MODEL || DEFAULT_MODELS[provider];
+}
 
 // Definição das ferramentas estruturada
 const tools = [
@@ -160,7 +172,22 @@ const tools = [
   }
 ];
 
+// CORREÇÃO: histórico agora é normalizado em um formato único e simples
+// { role: "user"|"assistant", content: string } independentemente do provedor.
+// Isso evita que, ao trocar de AI_PROVIDER no meio de uma conversa, mensagens
+// com estrutura específica de um provedor (ex: role "tool" do Groq, ou blocos
+// tool_use/tool_result do Anthropic) sejam repassadas cruas para outro
+// provedor que não as reconhece.
 const historicos = {};
+const MAX_HIST = 6;
+
+function pushNormalized(sender, role, content) {
+  if (!historicos[sender]) historicos[sender] = [];
+  const text = typeof content === "string" ? content : JSON.stringify(content);
+  if (!text || !text.trim()) return;
+  historicos[sender].push({ role, content: text });
+  historicos[sender] = historicos[sender].slice(-MAX_HIST);
+}
 
 function parseArgs(raw) {
   try {
@@ -186,7 +213,7 @@ async function executarFuncao(nome, args) {
       const { rows, fields, error } = await queryDB(sql);
       if (error) return error;
       if (!rows || !rows.length) return "Nenhum registro encontrado.";
-      
+
       const colunas = fields.map((f) => f.name);
       const linhas = rows.slice(0, 100).map((r) => colunas.map((c) => String(r[c] ?? "")).join(" | "));
       let resultado = colunas.join(" | ") + "\n" + "-".repeat(40) + "\n" + linhas.join("\n");
@@ -246,7 +273,7 @@ async function executarFuncao(nome, args) {
       const { listDrivePdfs, downloadDrivePdf } = require("./drive");
       const pdfParse = require("pdf-parse");
       const fs = require("fs");
-      
+
       const nomeArq = (args.nome_arquivo || "").trim();
       const arquivos = await listDrivePdfs();
       const arquivoAlvo = arquivos.find(f => f.name.toLowerCase().includes(nomeArq.toLowerCase()));
@@ -284,19 +311,17 @@ async function processMessage(sender, text) {
   if (!historicos[sender]) historicos[sender] = [];
 
   try {
-    // ================= MOTO RESPOSTA NATIVO GOOGLE GEMINI =================
+    // ================= GOOGLE GEMINI =================
     if (provider === "gemini") {
       const aiInstance = new GoogleGenAI({ apiKey });
-      const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+      const modelName = resolveModel("gemini");
 
-      // Converte o histórico simples para o formato estruturado do Gemini SDK
       const geminiContents = historicos[sender].map(m => ({
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }]
       }));
       geminiContents.push({ role: "user", parts: [{ text: text }] });
 
-      // Transforma o array de ferramentas no formato nativo que o SDK do Google exige
       const functionDeclarations = tools.map(t => ({
         name: t.function.name,
         description: t.function.description,
@@ -312,12 +337,10 @@ async function processMessage(sender, text) {
         }
       }));
 
-      // Loop de execução de funções (Function Calling do Gemini)
       for (let i = 0; i < 5; i++) {
         const functionCalls = response.functionCalls;
         if (!functionCalls || functionCalls.length === 0) break;
 
-        // Adiciona a chamada do modelo ao histórico de conteúdos
         geminiContents.push(response.candidates[0].content);
 
         const functionParts = [];
@@ -340,20 +363,18 @@ async function processMessage(sender, text) {
         }));
       }
 
-      // Salva o histórico otimizado (6 mensagens) para poupar tokens do usuário
-      const savedHistory = geminiContents.map(c => ({
-        role: c.role === "model" ? "assistant" : "user",
-        content: c.parts && c.parts[0] ? c.parts[0].text || JSON.stringify(c.parts[0]) : "Ação processada."
-      }));
-      historicos[sender] = savedHistory.slice(-6);
+      const finalText = response.text || "Análise concluída com sucesso.";
 
-      return response.text || "Análise concluída com sucesso.";
+      pushNormalized(sender, "user", text);
+      pushNormalized(sender, "assistant", finalText);
+
+      return finalText;
     }
 
-    // ================= NÚCLEO GROQ (LLAMA 3) =================
+    // ================= GROQ (LLAMA 3) =================
     if (provider === "groq") {
       const client = new Groq({ apiKey });
-      const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+      const model = resolveModel("groq");
 
       const messages = [
         { role: "system", content: SYSTEM_PROMPT },
@@ -384,23 +405,26 @@ async function processMessage(sender, text) {
         messages.push(msg);
       }
 
-      // Ajustado de -20 para -6 mensagens para evitar erro TPM 413 de limite excedido
-      historicos[sender] = messages.slice(1).slice(-6);
-      return msg.content || "Processado.";
+      const finalText = msg.content || "Processado.";
+
+      pushNormalized(sender, "user", text);
+      pushNormalized(sender, "assistant", finalText);
+
+      return finalText;
     }
 
-    // ================= NÚCLEO ANTHROPIC (CLAUDE) =================
+    // ================= ANTHROPIC (CLAUDE) =================
     if (provider === "anthropic") {
       const Anthropic = require("@anthropic-ai/sdk");
       const anthropic = new Anthropic({ apiKey });
-      const model = process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-20241022";
+      const model = resolveModel("anthropic");
 
-      const filteredHistory = historicos[sender].filter(m => m.role !== "system").map(m => ({
-        role: m.role === "tool" ? "user" : (m.role === "assistant" ? "assistant" : "user"),
-        content: m.content || "Ação em processamento..."
+      const anthropicHistory = historicos[sender].map(m => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content
       }));
 
-      let anthropicMessages = [...filteredHistory, { role: "user", content: text }];
+      let anthropicMessages = [...anthropicHistory, { role: "user", content: text }];
       const anthropicTools = tools.map(t => ({
         name: t.function.name, description: t.function.description, input_schema: t.function.parameters
       }));
@@ -416,7 +440,7 @@ async function processMessage(sender, text) {
 
         anthropicMessages.push({ role: "assistant", content: response.content });
         const toolResultContent = [];
-        
+
         for (const block of toolBlocks) {
           const result = await executarFuncao(block.name, block.input);
           toolResultContent.push({ type: "tool_result", tool_use_id: block.id, content: String(result) });
@@ -428,9 +452,13 @@ async function processMessage(sender, text) {
         }));
       }
 
-      historicos[sender] = anthropicMessages.slice(-6);
       const textBlock = response.content.find(c => c.type === "text");
-      return textBlock ? textBlock.text : "Tarefa concluída.";
+      const finalText = textBlock ? textBlock.text : "Tarefa concluída.";
+
+      pushNormalized(sender, "user", text);
+      pushNormalized(sender, "assistant", finalText);
+
+      return finalText;
     }
 
     return "⚠️ Erro: IA não configurada.";
