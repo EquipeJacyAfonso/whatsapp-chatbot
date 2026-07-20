@@ -1,5 +1,6 @@
 /**
  * Serviço de IA Multi-Provedor (Groq, Gemini, Anthropic) com Roteamento Avançado e Ferramentas
+ * Genérico: não assume estrutura fixa de planilha/banco — descobre tudo em runtime.
  */
 
 require("dotenv").config();
@@ -11,28 +12,39 @@ const { generatePDF } = require("./reports");
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 
-const SYSTEM_PROMPT = `Você é o assistente virtual administrativo da campanha do Jacy Afonso, candidato a Deputado Distrital pelo PT/DF.
+// CORREÇÃO: prompt genérico. Nenhuma referência fixa a nomes de aba,
+// colunas ou domínio de negócio específico — o bot pode ser reaproveitado
+// com qualquer planilha/banco que o usuário configurar. O nome/contexto
+// da organização pode ser informado via ORG_NAME no .env, se desejado.
+const ORG_NAME = process.env.ORG_NAME || "a organização";
+
+const SYSTEM_PROMPT = `Você é o assistente virtual administrativo de ${ORG_NAME}.
 
 REGRA CRUCIAL DE SINTAXE:
-Ao chamar qualquer ferramenta/função, você DEVE gerar os argumentos estritamente como um objeto JSON válido (usando chaves {}). Nunca adicione caracteres especiais, aspas ou colchetes grudados no nome da função. 
+Ao chamar qualquer ferramenta/função, você DEVE gerar os argumentos estritamente como um objeto JSON válido (usando chaves {}). Nunca adicione caracteres especiais, aspas ou colchetes grudados no nome da função.
 Exemplo correto: {"aba": "Respostas ao formulário 1", "coluna": "Cidade"}
 
-Abas da planilha: 
-- "Respostas ao formulário 1" (Colunas principais: "Nome completo:", "WhatsApp (com DDD):  ", "Cidade:  ", "Bairro:", "Profissão:", "Área de atuação:")
+IMPORTANTE — A PLANILHA E O BANCO NÃO TÊM ESTRUTURA FIXA:
+Você não sabe de antemão quais abas, colunas ou tabelas existem. NUNCA presuma nomes.
+Sempre que for a primeira interação sobre planilha nesta conversa, ou se uma chamada
+anterior retornar erro dizendo que a aba/coluna não foi encontrada, chame
+'listar_abas_planilha' antes de qualquer outra ferramenta de planilha, e leia o
+cabeçalho retornado por 'ler_planilha' para descobrir os nomes reais das colunas
+antes de usar 'segmentar_apoiadores' ou 'filtrar_contatos_avancado'.
 
 Suas diretrizes:
-1. Para buscas por cidade, bairro ou totais na planilha, use 'segmentar_apoiadores'.
-2. Para cruzar dados, use 'filtrar_contatos_avancado'.
-3. Para ver compromissos, use 'consultar_agenda_google'.
-4. Para notícias e internet, use 'pesquisar_na_web'.`;
+1. Para descobrir a estrutura da planilha, use 'listar_abas_planilha' e depois 'ler_planilha' (sem filtro) para ver o cabeçalho.
+2. Para contagens/totais agregados por uma coluna, use 'segmentar_apoiadores'.
+3. Para cruzar múltiplos critérios, use 'filtrar_contatos_avancado'.
+4. Para consultar dados relacionais mais complexos, use 'consultar_banco' (schema também deve ser descoberto via consulta a information_schema, se necessário).
+5. Para ver compromissos, use 'consultar_agenda_google'.
+6. Para notícias e internet, use 'pesquisar_na_web'.
+7. Se uma ferramenta retornar um "Aviso para a IA" dizendo que algo não foi encontrado, NUNCA invente dados — informe o usuário e, se fizer sentido, tente descobrir o nome correto (ex: chamando listar_abas_planilha) antes de desistir.`;
 
-// CORREÇÃO: modelos padrão centralizados. Todos os providers agora leem
-// a MESMA variável AI_MODEL (documentada no .env.example), com fallback
-// específico por provedor apenas quando AI_MODEL não é definido.
 const DEFAULT_MODELS = {
   groq: "llama-3.3-70b-versatile",
   gemini: "gemini-2.5-flash",
-  anthropic: "claude-haiku-4-5-20251001", // atualizado para bater com .env.example
+  anthropic: "claude-haiku-4-5-20251001",
 };
 
 function resolveModel(provider) {
@@ -45,7 +57,7 @@ const tools = [
     type: "function",
     function: {
       name: "consultar_banco",
-      description: "Executa SQL SELECT no PostgreSQL para buscar dados reais da campanha.",
+      description: "Executa SQL SELECT no PostgreSQL para buscar dados reais. O schema não é fixo — se não souber as tabelas/colunas, primeiro rode uma query em information_schema.tables e information_schema.columns.",
       parameters: {
         type: "object",
         properties: { sql: { type: "string", description: "Query SQL SELECT completa e válida" } },
@@ -57,7 +69,7 @@ const tools = [
     type: "function",
     function: {
       name: "listar_abas_planilha",
-      description: "Lista todas as abas disponíveis na planilha do Google Sheets. Use sempre antes de ler a planilha.",
+      description: "Lista todas as abas disponíveis na planilha configurada. A planilha pode ser diferente em cada instalação do bot — SEMPRE use esta ferramenta antes de ler ou filtrar dados se ainda não souber o nome exato da aba.",
       parameters: { type: "object", properties: {} }
     }
   },
@@ -65,12 +77,12 @@ const tools = [
     type: "function",
     function: {
       name: "ler_planilha",
-      description: "Lê o conteúdo de uma aba específica do Google Sheets.",
+      description: "Lê o conteúdo de uma aba específica do Google Sheets, incluindo o cabeçalho (primeira linha). Use sem 'filtro' primeiro para descobrir os nomes reais das colunas antes de usar outras ferramentas de planilha.",
       parameters: {
         type: "object",
         properties: {
-          aba: { type: "string", description: "Nome exato da aba" },
-          filtro: { type: "string", description: "Texto opcional para filtrar" }
+          aba: { type: "string", description: "Nome (aproximado) da aba. Não precisa ser exato — o sistema tenta encontrar a correspondência mais próxima." },
+          filtro: { type: "string", description: "Texto opcional para filtrar linhas por qualquer coluna" }
         },
         required: ["aba"]
       }
@@ -115,12 +127,12 @@ const tools = [
     type: "function",
     function: {
       name: "segmentar_apoiadores",
-      description: "Conta e agrupa a quantidade de pessoas na planilha com base em uma coluna específica.",
+      description: "Conta e agrupa a quantidade de linhas na planilha com base em uma coluna específica (ex: contar por cidade, por status, etc). Use nomes de aba/coluna descobertos via listar_abas_planilha/ler_planilha — não presuma nomes.",
       parameters: {
         type: "object",
         properties: {
-          aba: { type: "string", description: "O nome da aba" },
-          coluna: { type: "string", description: "O nome da coluna" }
+          aba: { type: "string", description: "Nome (aproximado) da aba" },
+          coluna: { type: "string", description: "Nome (aproximado) da coluna a agrupar" }
         },
         required: ["aba", "coluna"]
       }
@@ -130,11 +142,11 @@ const tools = [
     type: "function",
     function: {
       name: "filtrar_contatos_avancado",
-      description: "Cruza dados para buscar pessoas específicas na planilha com múltiplos filtros simultâneos.",
+      description: "Cruza dados para buscar linhas específicas na planilha com múltiplos filtros simultâneos (AND entre os filtros). Use nomes de coluna descobertos via ler_planilha — não presuma nomes.",
       parameters: {
         type: "object",
         properties: {
-          aba: { type: "string", description: "Nome exato da aba" },
+          aba: { type: "string", description: "Nome (aproximado) da aba" },
           filtros: {
             type: "array",
             items: {
@@ -172,12 +184,6 @@ const tools = [
   }
 ];
 
-// CORREÇÃO: histórico agora é normalizado em um formato único e simples
-// { role: "user"|"assistant", content: string } independentemente do provedor.
-// Isso evita que, ao trocar de AI_PROVIDER no meio de uma conversa, mensagens
-// com estrutura específica de um provedor (ex: role "tool" do Groq, ou blocos
-// tool_use/tool_result do Anthropic) sejam repassadas cruas para outro
-// provedor que não as reconhece.
 const historicos = {};
 const MAX_HIST = 6;
 
@@ -251,9 +257,16 @@ async function executarFuncao(nome, args) {
       if (!dados || dados.length === 0) return `A aba '${aba}' está vazia ou não existe.`;
       if (dados[0] && dados[0][0] && String(dados[0][0]).includes("Aviso para a IA")) return dados[0][0];
 
-      const limit = 15;
+      // CORREÇÃO: limite aumentado de 15 para 200 linhas. Com apenas 15
+      // linhas, planilhas grandes pareciam "sem dados" para qualquer
+      // pergunta que não batesse com as primeiras linhas. Buscas amplas
+      // ainda devem preferir segmentar_apoiadores/filtrar_contatos_avancado,
+      // que agregam no servidor em vez de despejar linhas cruas.
+      const limit = 200;
       let resultado = dados.slice(0, limit).map((row) => row.join(" | ")).join("\n");
-      if (dados.length > limit) resultado += `\n\n[Exibindo ${limit} de ${dados.length} linhas para economizar memória].`;
+      if (dados.length > limit) {
+        resultado += `\n\n[Exibindo ${limit} de ${dados.length} linhas. Para buscas amplas ou contagens, use segmentar_apoiadores ou filtrar_contatos_avancado em vez de pedir mais linhas cruas aqui.]`;
+      }
       return resultado;
     }
 
