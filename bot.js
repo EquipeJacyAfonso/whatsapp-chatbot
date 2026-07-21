@@ -1,5 +1,5 @@
 /**
- * Bot WhatsApp Administrativo — Jacy Afonso (PT/DF)
+ * Bot WhatsApp Administrativo
  * Responde perguntas sobre dados do PostgreSQL, Google Sheets e Google Drive
  * via mensagens no WhatsApp, gerando relatórios em texto ou PDF.
  */
@@ -41,7 +41,7 @@ async function startBot() {
     },
     printQRInTerminal: false,
     logger,
-    browser: ["Jacy Bot Admin", "Chrome", "1.0.0"],
+    browser: ["Bot Admin", "Chrome", "1.0.0"],
     syncFullHistory: false,
   });
 
@@ -61,7 +61,6 @@ async function startBot() {
     if (connection === "open") {
       console.log("\n✅ WhatsApp conectado com sucesso!\n");
 
-      // Salva lista de grupos para o painel admin
       try {
         const groups     = await sock.groupFetchAllParticipating();
         const groupList  = Object.values(groups).map((g) => ({ id: g.id, name: g.subject }));
@@ -73,7 +72,7 @@ async function startBot() {
 
       const groupId = process.env.GROUP_ID;
       if (!groupId) {
-        console.log("⚠️  GROUP_ID não configurado.");
+        console.log("⚠️  GROUP_ID não configurado (ou multi-tenant: qualquer grupo autorizado pode ser usado).");
         console.log("   Acesse o painel admin, selecione o grupo e salve.\n");
       } else {
         console.log(`📡 Monitorando grupo: ${groupId}\n`);
@@ -103,7 +102,9 @@ async function startBot() {
         const from    = msg.key.remoteJid;
         const groupId = process.env.GROUP_ID;
 
-        // Só responde no grupo configurado (ou em qualquer chat se não configurado)
+        // Se GROUP_ID estiver configurado, só responde nesse grupo (modo single-tenant).
+        // Se não estiver configurado, responde em qualquer grupo (modo multi-tenant via
+        // bot_configs — cada grupo pode ter sua própria planilha/config no banco).
         if (groupId && from !== groupId) continue;
 
         const text = (
@@ -119,9 +120,12 @@ async function startBot() {
         console.log(`💬 [${sender}]: ${text.substring(0, 80)}${text.length > 80 ? "..." : ""}`);
 
         await sock.sendPresenceUpdate("composing", from);
-        const resposta = await processMessage(sender, text);
 
-        // Divide mensagens longas automaticamente (limite WhatsApp: 4096 chars)
+        // CORREÇÃO: 'from' (o próprio grupo) é passado como groupId para
+        // que services/config.js possa resolver overrides específicos
+        // desse grupo (planilha diferente, provider de IA diferente, etc.)
+        const resposta = await processMessage(sender, text, from);
+
         const chunks = splitMessage(resposta, 4000);
         for (const chunk of chunks) {
           await sock.sendMessage(from, { text: chunk });

@@ -1,15 +1,12 @@
 /**
  * Serviço Google Sheets via Service Account
- * Genérico: não assume nome de aba, colunas ou estrutura fixa.
- * Qualquer planilha compartilhada com a service account pode ser usada.
+ * Genérico: não assume nome de aba, colunas, ou uma única planilha fixa.
+ * Suporta múltiplas planilhas (ver services/config.js → spreadsheets[]).
  */
 
 const { google } = require("googleapis");
 
-// Cache simples em memória por (spreadsheetId + aba), com TTL curto.
-// Evita relançar a mesma leitura da API várias vezes na mesma pergunta
-// (quando a IA chama listar/ler/segmentar/filtrar em sequência).
-const CACHE_TTL_MS = 60 * 1000; // 60s
+const CACHE_TTL_MS = 60 * 1000;
 const cache = new Map();
 
 function getAuth() {
@@ -31,30 +28,51 @@ function getAuth() {
   }
 }
 
-/**
- * Normaliza um texto para comparação robusta de nomes de coluna/aba:
- * remove acentos, espaços duplicados/à direita, dois-pontos residuais
- * (comum em cabeçalhos de formulário Google, ex: "Cidade:  "), e caixa.
- */
 function normalize(str) {
   return String(str || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/:/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
 
-async function listSheets() {
+/**
+ * Resolve qual spreadsheetId usar: se um id/nome específico for passado,
+ * tenta encontrá-lo na lista configurada; senão usa o padrão (primeiro
+ * da lista, ou process.env.SPREADSHEET_ID para retrocompatibilidade).
+ */
+function resolveSpreadsheetId(spreadsheets, planilhaGuess) {
+  if (!planilhaGuess) {
+    if (spreadsheets && spreadsheets.length) return spreadsheets[0].id;
+    return process.env.SPREADSHEET_ID || "";
+  }
+
+  const guess = normalize(planilhaGuess);
+
+  // Tenta casar por nome configurado ou pelo próprio ID
+  const match = (spreadsheets || []).find(
+    (s) => normalize(s.nome) === guess || normalize(s.nome).includes(guess) || s.id === planilhaGuess
+  );
+  if (match) return match.id;
+
+  // Se não achou por nome mas parece um ID de planilha, usa como está
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(planilhaGuess)) return planilhaGuess;
+
+  // Fallback: padrão
+  if (spreadsheets && spreadsheets.length) return spreadsheets[0].id;
+  return process.env.SPREADSHEET_ID || "";
+}
+
+async function listSheets(spreadsheetId) {
   const auth = getAuth();
   if (!auth) return ["Sheets não configurado"];
+  if (!spreadsheetId) return ["Nenhuma planilha configurada"];
 
   try {
     const sheets = google.sheets({ version: "v4", auth });
-    const res = await sheets.spreadsheets.get({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-    });
+    const res = await sheets.spreadsheets.get({ spreadsheetId });
     return res.data.sheets.map((s) => s.properties.title);
   } catch (error) {
     console.error("Erro ao listar abas:", error.message);
@@ -62,12 +80,8 @@ async function listSheets() {
   }
 }
 
-/**
- * Lê os dados brutos de uma aba, com cache curto.
- * Retorna sempre um array de arrays (rows), incluindo o cabeçalho na posição 0.
- */
-async function _readRaw(sheetName) {
-  const cacheKey = `${process.env.SPREADSHEET_ID}::${sheetName}`;
+async function _readRaw(spreadsheetId, sheetName) {
+  const cacheKey = `${spreadsheetId}::${sheetName}`;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.time < CACHE_TTL_MS) {
     return cached.rows;
@@ -78,7 +92,7 @@ async function _readRaw(sheetName) {
 
   const sheets = google.sheets({ version: "v4", auth });
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.SPREADSHEET_ID,
+    spreadsheetId,
     range: sheetName,
   });
 
@@ -87,99 +101,88 @@ async function _readRaw(sheetName) {
   return rows;
 }
 
-/**
- * Encontra o nome real de uma aba a partir de um nome aproximado
- * fornecido pela IA (que pode vir com acentos/espaços diferentes).
- * Retorna null se não encontrar nenhuma correspondência razoável.
- */
-async function resolveSheetName(sheetNameGuess) {
-  const abas = await listSheets();
-  if (!abas.length || abas[0].startsWith("Erro") || abas[0] === "Sheets não configurado") {
+async function resolveSheetName(spreadsheetId, sheetNameGuess) {
+  const abas = await listSheets(spreadsheetId);
+  if (!abas.length || abas[0].startsWith("Erro") || abas[0].includes("não configurad")) {
     return null;
   }
 
   const guess = normalize(sheetNameGuess);
 
-  // 1. match exato (normalizado)
   let match = abas.find((a) => normalize(a) === guess);
   if (match) return match;
 
-  // 2. match por substring em qualquer direção
   match = abas.find((a) => normalize(a).includes(guess) || guess.includes(normalize(a)));
   if (match) return match;
 
   return null;
 }
 
-/**
- * Encontra o índice de uma coluna a partir de um nome aproximado.
- * Prioriza match exato (normalizado) sobre match por substring, para
- * evitar confundir colunas parecidas (ex: "nome" vs "sobrenome").
- */
 function resolveColumnIndex(header, columnGuess) {
   const normalizedHeader = header.map(normalize);
   const guess = normalize(columnGuess);
 
-  // 1. match exato
   let idx = normalizedHeader.findIndex((h) => h === guess);
   if (idx !== -1) return idx;
 
-  // 2. header começa com o termo buscado (evita "sobrenome" bater com "nome")
   idx = normalizedHeader.findIndex((h) => h.startsWith(guess) || guess.startsWith(h));
   if (idx !== -1) return idx;
 
-  // 3. fallback: substring em qualquer posição
   idx = normalizedHeader.findIndex((h) => h.includes(guess) || guess.includes(h));
-  return idx; // -1 se não achar
+  return idx;
 }
 
-async function readSheet(sheetNameGuess, filtro = "") {
+async function readSheet(sheetNameGuess, filtro = "", opts = {}) {
+  const { spreadsheetId: spreadsheetIdParam, spreadsheets } = opts;
+  const spreadsheetId = spreadsheetIdParam || resolveSpreadsheetId(spreadsheets, opts.planilha);
+
   const auth = getAuth();
   if (!auth) return [[`Aviso para a IA: Google Sheets não configurado.`]];
+  if (!spreadsheetId) return [[`Aviso para a IA: Nenhuma planilha configurada.`]];
 
   try {
-    const sheetName = await resolveSheetName(sheetNameGuess);
+    const sheetName = await resolveSheetName(spreadsheetId, sheetNameGuess);
     if (!sheetName) {
-      const abas = await listSheets();
+      const abas = await listSheets(spreadsheetId);
       return [[`Aviso para a IA: A aba '${sheetNameGuess}' não existe. Abas disponíveis: [${abas.join(", ")}]. Chame listar_abas_planilha se precisar confirmar.`]];
     }
 
-    const rows = await _readRaw(sheetName);
+    const rows = await _readRaw(spreadsheetId, sheetName);
     if (!rows || !rows.length) return [];
 
     if (filtro) {
       const f = normalize(filtro);
       const header = rows[0];
-      const filtered = rows.slice(1).filter((row) =>
-        row.some((cell) => normalize(cell).includes(f))
-      );
+      const filtered = rows.slice(1).filter((row) => row.some((cell) => normalize(cell).includes(f)));
       return [header, ...filtered];
     }
 
     return rows;
   } catch (error) {
     console.error("Erro na Planilha:", error.message);
-
     if (error.message.includes("Unable to parse range")) {
       return [[`Aviso para a IA: A aba '${sheetNameGuess}' não existe. Pergunte ao utilizador o nome correto ou chame listar_abas_planilha.`]];
     }
-
     return [[`Aviso para a IA: Falha ao ler a planilha: ${error.message}`]];
   }
 }
 
-async function groupSheetData(sheetNameGuess, columnGuess) {
+async function groupSheetData(sheetNameGuess, columnGuess, opts = {}) {
+  const { spreadsheetId: spreadsheetIdParam, spreadsheets } = opts;
+  const spreadsheetId = spreadsheetIdParam || resolveSpreadsheetId(spreadsheets, opts.planilha);
+
   const auth = getAuth();
   if (!auth) return "Aviso para a IA: Google Sheets não configurado.";
+  if (!spreadsheetId) return "Aviso para a IA: Nenhuma planilha configurada.";
 
   try {
-    const sheetName = await resolveSheetName(sheetNameGuess);
+    const sheetName = await resolveSheetName(spreadsheetId, sheetNameGuess);
     if (!sheetName) {
-      const abas = await listSheets();
+      const abas = await listSheets(spreadsheetId);
       return `Aviso para a IA: A aba '${sheetNameGuess}' não foi encontrada. Abas disponíveis: [${abas.join(", ")}]`;
     }
 
-    const rows = await _readRaw(sheetName);
+    const rows = await _readRaw(spreadsheetId, sheetName);
     if (!rows || rows.length < 2) return `A aba '${sheetName}' não possui dados suficientes.`;
 
     const header = rows[0];
@@ -189,7 +192,6 @@ async function groupSheetData(sheetNameGuess, columnGuess) {
       return `Aviso para a IA: A coluna referida a '${columnGuess}' não foi encontrada na aba '${sheetName}'. As colunas que existem são: [${header.join(", ")}]`;
     }
 
-    // Conta as ocorrências (Agrupamento numérico)
     const counts = {};
     for (let i = 1; i < rows.length; i++) {
       let val = (rows[i][colIndex] || "Não Informado").trim().toUpperCase();
@@ -217,18 +219,27 @@ async function groupSheetData(sheetNameGuess, columnGuess) {
   }
 }
 
-async function filterSheetAdvanced(sheetNameGuess, filtros) {
+async function filterSheetAdvanced(sheetNameGuess, filtros, opts = {}) {
+  const {
+    spreadsheetId: spreadsheetIdParam,
+    spreadsheets,
+    colunaNomePrioritaria = "",
+    colunaContatoPrioritaria = ["whatsapp", "telefone", "celular"],
+  } = opts;
+  const spreadsheetId = spreadsheetIdParam || resolveSpreadsheetId(spreadsheets, opts.planilha);
+
   const auth = getAuth();
   if (!auth) return "Aviso para a IA: Google Sheets não configurado.";
+  if (!spreadsheetId) return "Aviso para a IA: Nenhuma planilha configurada.";
 
   try {
-    const sheetName = await resolveSheetName(sheetNameGuess);
+    const sheetName = await resolveSheetName(spreadsheetId, sheetNameGuess);
     if (!sheetName) {
-      const abas = await listSheets();
+      const abas = await listSheets(spreadsheetId);
       return `Aviso para a IA: A aba '${sheetNameGuess}' não foi encontrada. Abas disponíveis: [${abas.join(", ")}]`;
     }
 
-    const rows = await _readRaw(sheetName);
+    const rows = await _readRaw(spreadsheetId, sheetName);
     if (!rows || rows.length < 2) return `A aba '${sheetName}' está vazia.`;
 
     const header = rows[0];
@@ -275,11 +286,25 @@ async function filterSheetAdvanced(sheetNameGuess, filtros) {
     const limit = 20;
     let output = `🔍 Busca Avançada na aba '${sheetName}': Encontrados ${resultados.length} contatos que batem com os critérios exatos.\n\n`;
 
-    // Tenta identificar colunas "nome"/"telefone" de forma genérica, sem
-    // depender de nomes fixos de uma planilha específica.
+    // CORREÇÃO: colunas "nome" e "contato" prioritárias agora são
+    // configuráveis (services/config.js → colunaNomePrioritaria /
+    // colunaContatoPrioritaria), em vez de heurística fixa presa a
+    // vocabulário de uma planilha específica.
     const normalizedHeader = header.map(normalize);
-    const nomeIdx = normalizedHeader.findIndex((h) => h.includes("nome"));
-    const telIdx = normalizedHeader.findIndex((h) => h.includes("whatsapp") || h.includes("telefone") || h.includes("celular"));
+
+    let nomeIdx = -1;
+    if (colunaNomePrioritaria) {
+      nomeIdx = resolveColumnIndex(header, colunaNomePrioritaria);
+    }
+    if (nomeIdx === -1) {
+      nomeIdx = normalizedHeader.findIndex((h) => h.includes("nome"));
+    }
+
+    let telIdx = -1;
+    for (const termo of colunaContatoPrioritaria) {
+      telIdx = normalizedHeader.findIndex((h) => h.includes(normalize(termo)));
+      if (telIdx !== -1) break;
+    }
 
     for (let i = 0; i < Math.min(limit, resultados.length); i++) {
       const r = resultados[i];
@@ -306,4 +331,4 @@ async function filterSheetAdvanced(sheetNameGuess, filtros) {
   }
 }
 
-module.exports = { listSheets, readSheet, groupSheetData, filterSheetAdvanced };
+module.exports = { listSheets, readSheet, groupSheetData, filterSheetAdvanced, resolveSpreadsheetId };
